@@ -95,7 +95,6 @@ class cRPA(lib.StreamObject):
         self.nvir       =   self.nmo - self.nocc
     
     def get_Lpq(self):
-        loc_coeff = self.loc_coeff
         self.canon_Lov, self.loc_Lpq = get_Lpq(self.mf, self.df_file, self.loc_coeff)
         return self.canon_Lov, self.loc_Lpq
     
@@ -105,7 +104,7 @@ class cRPA(lib.StreamObject):
     
     def kernel(self, screened = True):
         self.ERIs = kernel(self, screened = True)
-        return ERIs
+        return self.ERIs
 
 #The DF-CASSCF class overwrote get_h2eff, get_veff, and get_jk of CASSCF
 #https://pyscf.org/_modules/pyscf/mcscf/df.html#density_fit
@@ -136,7 +135,6 @@ class cRPA_CASCI(mcscf.casci.CASCI):
         return self.screened_ERIs
 
 if __name__ == '__main__':
-    import numpy as np
     #hBN+C2
     from pyscf.pbc import gto, dft
     cell = gto.Cell()
@@ -248,21 +246,22 @@ if __name__ == '__main__':
     print('hBN+C2 C2pz screened ERIs (eV)', my_screened_eris*27.2114)
     
     from pyscf import mcscf, fci
-    weights = np.ones(4)/4
-    solver1 = fci.addons.fix_spin(fci.direct_spin1.FCI(cell), ss=2) # <S^2> = 2 for Triplet
-    solver1.spin = 2
-    solver1.nroots = 1
-    solver2 = fci.addons.fix_spin(fci.direct_spin1.FCI(cell), ss=0) # <S^2> = 0 for Singlet
-    solver2.spin = 0
-    solver2.nroots = 3
+    # weights = np.ones(4)/4
+    # solver1 = fci.addons.fix_spin(fci.direct_spin1.FCI(cell), ss=2) # <S^2> = 2 for Triplet
+    # solver1.spin = 2
+    # solver1.nroots = 1
+    # solver2 = fci.addons.fix_spin(fci.direct_spin1.FCI(cell), ss=0) # <S^2> = 0 for Singlet
+    # solver2.spin = 0
+    # solver2.nroots = 3
 
     ncas  = 2
     ne_act = 2
     mycas = cRPA_CASCI(mf, ncas, ne_act, screened_ERIs = my_screened_eris)
     mycas.canonicalization = False
-    mcscf.state_average_mix_(mycas, [solver1, solver2], weights)
+    # mcscf.state_average_mix_(mycas, [solver1, solver2], weights)
     mycas.verbose = 6
     orbs = np.hstack( ( np.hstack( (mf.mo_coeff[:, :nocc-1], C_loc) ), mf.mo_coeff[:, nocc+1:] ) )
+    mycas.fcisolver.nroots = 4
     mycas.kernel(orbs)
         
     h1, ecore = mycas.get_h1eff(orbs)
