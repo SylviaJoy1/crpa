@@ -31,11 +31,11 @@ def kernel(crpa, screened = True):
         
     return einsum('Pij,PQ,Qkl->ijkl', loc_Lpq, i_tilde, loc_Lpq)
 
+#Make the unitary transformation matrix from canonical to localized orbitals
 def make_U(mf, loc_coeff=None):
     cell = mf.cell
     if loc_coeff is None:
-        loc_coff = mf.mo_coeff
-    #Make the unitary transformation matrix from canonical to localized orbitals
+        return np.eye(np.shape(mf.mo_coeff)[0]) #canonical to canonical
     # "C matrix stores the AO to localized orbital coefficients"
     #"Mole.intor() is provided to obtain the one- and two-electron AO integrals"
     # S_atomic = cell.intor_symmetric('int1e_ovlp')
@@ -45,7 +45,7 @@ def make_U(mf, loc_coeff=None):
 
 def get_Lpq(mf,  df_file, loc_coeff=None):
     if loc_coeff is None:
-        loc_coff = mf.mo_coeff
+        loc_coeff = mf.mo_coeff
     cell = mf.cell
     a_gdf = df.GDF(cell)
     a_gdf._cderi = df_file
@@ -83,9 +83,6 @@ class cRPA(lib.StreamObject):
         
         ##################################################
         # don't modify the following attributes, they are not input options
-        self.canon_Lov = None
-        self.loc_Lpq = None
-        self.U = None
         self.ERIs = None
         self.mo_energy  =   mf.mo_energy
         self.mo_occ     =   mf.mo_occ
@@ -95,15 +92,15 @@ class cRPA(lib.StreamObject):
         self.nvir       =   self.nmo - self.nocc
     
     def get_Lpq(self):
-        self.canon_Lov, self.loc_Lpq = get_Lpq(self.mf, self.df_file, self.loc_coeff)
-        return self.canon_Lov, self.loc_Lpq
+        canon_Lov, loc_Lpq = get_Lpq(self.mf, self.df_file, self.loc_coeff)
+        return canon_Lov, loc_Lpq
     
     def make_U(self):
-        self.U = make_U(self.mf, self.loc_coeff)
-        return self.U
+        U = make_U(self.mf, self.loc_coeff)
+        return U
     
-    def kernel(self, screened = True):
-        self.ERIs = kernel(self, screened = True)
+    def kernel(self):
+        self.ERIs = kernel(self)
         return self.ERIs
 
 #The DF-CASSCF class overwrote get_h2eff, get_veff, and get_jk of CASSCF
@@ -263,7 +260,7 @@ if __name__ == '__main__':
     orbs = np.hstack( ( np.hstack( (mf.mo_coeff[:, :nocc-1], C_loc) ), mf.mo_coeff[:, nocc+1:] ) )
     mycas.fcisolver.nroots = 4
     mycas.kernel(orbs)
-        
+  
     h1, ecore = mycas.get_h1eff(orbs)
     print('cRPA_CASCI h1', h1)
     print('diagonalized cRPA_CASCI h1', np.linalg.eigh(h1))
