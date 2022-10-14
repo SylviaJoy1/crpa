@@ -99,8 +99,8 @@ class cRPA(lib.StreamObject):
         U = make_U(self.mf, self.loc_coeff)
         return U
     
-    def kernel(self):
-        self.ERIs = kernel(self)
+    def kernel(self, screened = True):
+        self.ERIs = kernel(self, screened)
         return self.ERIs
 
 #The DF-CASSCF class overwrote get_h2eff, get_veff, and get_jk of CASSCF
@@ -118,7 +118,7 @@ from pyscf import mcscf
 class cRPA_CASCI(mcscf.casci.CASCI):
     def __init__(self, mf_or_mol, ncas, nelecas, ncore=None, screened_ERIs=None):
         super().__init__(mf_or_mol, ncas, nelecas, ncore=None)
-        self.screened_ERIs = None
+        self.screened_ERIs = screened_ERIs
         
     def get_h2eff(self, mo_coeff=None):
         '''Compute the active space two-particle Hamiltonian.
@@ -237,25 +237,17 @@ if __name__ == '__main__':
     C_loc = lib.chkfile.load('hbn_c2.chk', 'C_loc')
     
     mycRPA = cRPA(mf, 'hbn_c2_pbc_gdf.h5', loc_coeff = C_loc)
-    # my_unscreened_eris = mycRPA.kernel(screened = False)
-    # print('hBN+C2 C2pz unscreened ERIs (eV)', my_unscreened_eris*27.2114)
-    my_screened_eris = mycRPA.kernel()
+    my_unscreened_eris = mycRPA.kernel(screened = False)
+    print('hBN+C2 C2pz unscreened ERIs (eV)', my_unscreened_eris*27.2114)
+    my_screened_eris = mycRPA.kernel(screened = True)
     print('hBN+C2 C2pz screened ERIs (eV)', my_screened_eris*27.2114)
     
     from pyscf import mcscf, fci
-    # weights = np.ones(4)/4
-    # solver1 = fci.addons.fix_spin(fci.direct_spin1.FCI(cell), ss=2) # <S^2> = 2 for Triplet
-    # solver1.spin = 2
-    # solver1.nroots = 1
-    # solver2 = fci.addons.fix_spin(fci.direct_spin1.FCI(cell), ss=0) # <S^2> = 0 for Singlet
-    # solver2.spin = 0
-    # solver2.nroots = 3
-
+    
     ncas  = 2
     ne_act = 2
     mycas = cRPA_CASCI(mf, ncas, ne_act, screened_ERIs = my_screened_eris)
     mycas.canonicalization = False
-    # mcscf.state_average_mix_(mycas, [solver1, solver2], weights)
     mycas.verbose = 6
     orbs = np.hstack( ( np.hstack( (mf.mo_coeff[:, :nocc-1], C_loc) ), mf.mo_coeff[:, nocc+1:] ) )
     mycas.fcisolver.nroots = 4
