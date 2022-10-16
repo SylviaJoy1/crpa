@@ -11,6 +11,10 @@ def kernel(crpa, screened = True):
     e_mo_vir = crpa.mo_energy[nocc:] 
     
     canon_Lov, loc_Lpq = crpa.get_Lpq()
+    
+    if screened is False:
+        return einsum('Pij,Pkl->ijkl', loc_Lpq, loc_Lpq) 
+        
     U = crpa.make_U()
     
     naux = np.shape(canon_Lov)[0]
@@ -25,9 +29,6 @@ def kernel(crpa, screened = True):
             # i_mat += (1-np.sum(np.abs(U_occ[i,:])**2)*np.sum(np.abs(U_vir[a,:])**2))*np.outer(Lov[:,i,a]/(e_mo_occ[i] - e_mo_vir[a]), Lov[:,i,a])
                 
     i_tilde = np.linalg.inv(np.eye(naux)-4.0*i_mat)
-         
-    if screened is False:
-        return einsum('Pij,Pkl->ijkl', loc_Lpq, loc_Lpq) 
         
     return einsum('Pij,PQ,Qkl->ijkl', loc_Lpq, i_tilde, loc_Lpq)
 
@@ -233,6 +234,9 @@ if __name__ == '__main__':
     # mo_init = lo.PM(cell, mf.mo_coeff[idcs])
     # C_loc = mo_init.kernel()
     # lib.chkfile.dump('hbn_c2.chk', 'C_loc', C_loc)
+    
+    #DFT took 5 min
+    #CRPA+CASCI took 32 min
     
     C_loc = lib.chkfile.load('hbn_c2.chk', 'C_loc')
     
