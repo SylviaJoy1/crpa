@@ -25,8 +25,7 @@ def kernel(crpa, screened = True):
         
     for a in range(nvir):
         for i in range(nocc): 
-            i_mat += (1-np.sum(np.abs(U_occ[i,:])**2)*np.sum(np.abs(U_vir[a,:])**2))*einsum('P,Q->PQ', canon_Lov[:,i,a]/(e_mo_occ[i] - e_mo_vir[a]), canon_Lov[:,i,a])
-            # i_mat += (1-np.sum(np.abs(U_occ[i,:])**2)*np.sum(np.abs(U_vir[a,:])**2))*np.outer(Lov[:,i,a]/(e_mo_occ[i] - e_mo_vir[a]), Lov[:,i,a])
+            i_mat += (1-np.sum(np.abs(U_occ[i,:])**2)*np.sum(np.abs(U_vir[a,:])**2))*np.outer(canon_Lov[:,i,a]/(e_mo_occ[i] - e_mo_vir[a]), canon_Lov[:,i,a])
                 
     i_tilde = np.linalg.inv(np.eye(naux)-4.0*i_mat)
         
@@ -104,17 +103,39 @@ class cRPA(lib.StreamObject):
         self.ERIs = kernel(self, screened)
         return self.ERIs
 
-#The DF-CASSCF class overwrote get_h2eff, get_veff, and get_jk of CASSCF
-#https://pyscf.org/_modules/pyscf/mcscf/df.html#density_fit
-# pyscf.mcscf.df.density_fit(casscf, auxbasis=None, with_df=None)
-# Generate DF-CASSCF for given CASSCF object. It is done by overwriting three CASSCF member functions:
-# casscf.ao2mo which generates MO integrals
-# casscf.get_veff which generate JK from core density matrix
-# casscf.get_jk 
-#I do not need to edit get_veff, get_jk.
-#You could have half-screened, half-active orbitals as part of h1eff
-#h1eff_{ab} = \sum_{\lambda\sigma} P^{core}_{\lambda\sigma}(ab|\lambda\sigma) - 0.5 * \sum_{\lambda\sigma} P^{core}_{\lambda\sigma}(a\sigma|\lambda b)
-#But surely we ignore this?
+def h1e_for_cas(casci, mo_coeff=None, ncas=None, ncore=None):
+    from functools import reduce
+    '''CAS space one-electron hamiltonian with DFT h1e (no double counting correction)
+    Args:
+        casci: a CASSCF/CASCI object or RHF object
+    
+    Returns:
+        A tuple, the first is the effective one-electron DFT hamiltonian defined in CAS space,
+        the second is the electronic energy from core.
+    See also: pyscf/mcscf/casci.py
+    '''
+    if mo_coeff is None: mo_coeff = casci.mo_coeff
+    if ncas is None: ncas = casci.ncas
+    if ncore is None: ncore = casci.ncore
+    mo_core = mo_coeff[:,:ncore]
+    mo_cas = mo_coeff[:,ncore:ncore+ncas]
+    
+    hcore = casci.get_hcore()
+    veff = casci._scf.get_veff()
+    energy_core = casci.energy_nuc()
+    #:if mo_core.size == 0:
+    #:    corevhf = 0
+    #:else:
+    #:    core_dm = numpy.dot(mo_core, mo_core.conj().T) * 2
+    #:    corevhf = casci.get_veff(casci.mol, core_dm)
+    #:    energy_core += numpy.einsum('ij,ji', core_dm, hcore).real
+    #:    energy_core += numpy.einsum('ij,ji', core_dm, corevhf).real * .5
+    #:h1eff = reduce(numpy.dot, (mo_cas.conj().T, hcore+corevhf, mo_cas))
+    h1eff = reduce(np.dot, (mo_cas.conj().T, hcore+veff, mo_cas))
+
+    # The core energy is meaningless for now, but doesn't matter for excitation energies
+    return h1eff, energy_core
+        
 from pyscf import mcscf
 class cRPA_CASCI(mcscf.casci.CASCI):
     def __init__(self, mf_or_mol, ncas, nelecas, ncore=None, screened_ERIs=None):
@@ -130,180 +151,125 @@ class cRPA_CASCI(mcscf.casci.CASCI):
         '''
         if self.screened_ERIs is None:
             return self.ao2mo(mo_coeff)
+            #this is not using density fitting.
         return self.screened_ERIs
 
+    # def get_h1eff(self, mo_coeff=None, ncas=None, ncore=None):
+    #     return self.h1e_for_cas(mo_coeff, ncas, ncore)
+    
+    def get_veff(self, mol=None, dm=None, hermi=1):
+        if mol is None: mol = self.mol
+        if dm is None:
+            mocore = self.mo_coeff[:,:self.ncore]
+            dm = numpy.dot(mocore, mocore.conj().T) * 2
+        # use get_veff even if _scf is a DFT object
+        return self._scf.get_veff(mol, dm, hermi=hermi)
+
+    get_h1cas = h1e_for_cas = h1e_for_cas
+
+    def get_h1eff(self, mo_coeff=None, ncas=None, ncore=None):
+        return self.h1e_for_cas(mo_coeff, ncas, ncore)
+            
 if __name__ == '__main__':
+    
     #hBN+C2
     from pyscf.pbc import gto, dft
-    cell = gto.Cell()
-    cell.atom='''
-    C             0.0000000000        0.0022633259        0.0000000000
-    C             0.0000000000        1.3753623410        0.0000000000
-    B             2.4877331551        0.0126249220        0.0000000000
-    N             2.5260080244        1.4435321178        0.0000000000
-    B             4.9958402174       -0.0023392202        0.0000000000
-    N             5.0069039095        1.4401349492        0.0000000000
-    B             7.5041597826       -0.0023392202        0.0000000000
-    N             7.4930960905        1.4401349492        0.0000000000
-    B            10.0122668449        0.0126249220        0.0000000000
-    N             9.9739919756        1.4435321178        0.0000000000
-    B            -1.2773800442        2.1590715924        0.0000000000
-    N            -1.2591188862        3.6100329461        0.0000000000
-    B             1.2773800442        2.1590715924        0.0000000000
-    N             1.2591188862        3.6100329461        0.0000000000
-    B             3.7663875637        2.1673282174        0.0000000000
-    N             3.7550194127        3.6103930256        0.0000000000
-    B             6.2500000000        2.1647177630        0.0000000000
-    N             6.2500000000        3.6089321229        0.0000000000
-    B             8.7336124363        2.1673282174        0.0000000000
-    N             8.7449805873        3.6103930256        0.0000000000
-    B            -2.5015923324        4.3329533228        0.0000000000
-    N            -2.5043241319        5.7797523707        0.0000000000
-    B            -0.0000000000        4.3206914723        0.0000000000
-    N             0.0000000000        5.7716115082        0.0000000000
-    B             2.5015923324        4.3329533228        0.0000000000
-    N             2.5043241319        5.7797523707        0.0000000000
-    B             5.0008155894        4.3309779705        0.0000000000
-    N             5.0004133642        5.7756087394        0.0000000000
-    B             7.4991844106        4.3309779705        0.0000000000
-    N             7.4995866358        5.7756087394        0.0000000000
-    B            -3.7526337581        6.5004832687        0.0000000000
-    N            -3.7584315874        7.9493931575        0.0000000000
-    B            -1.2498755049        6.4943568803        0.0000000000
-    N            -1.2524702829        7.9400325834        0.0000000000
-    B             1.2498755049        6.4943568803        0.0000000000
-    N             1.2524702829        7.9400325834        0.0000000000
-    B             3.7526337581        6.5004832687        0.0000000000
-    N             3.7584315874        7.9493931575        0.0000000000
-    B             6.2500000000        6.4893393890        0.0000000000
-    N             6.2500000000        7.9338681655        0.0000000000
-    B            -5.0121775306        8.6591059371        0.0000000000
-    N            -5.0426492007       10.1120768419        0.0000000000
-    B            -2.5024068179        8.6625769188        0.0000000000
-    N            -2.5142169182       10.1036473994        0.0000000000
-    B             0.0000000000        8.6590020733        0.0000000000
-    N            -0.0000000000       10.1014666974        0.0000000000
-    B             2.5024068179        8.6625769188        0.0000000000
-    N             2.5142169182       10.1036473994        0.0000000000
-    B             5.0121775306        8.6591059371        0.0000000000
-    N             5.0426492007       10.1120768419        0.0000000000
-    '''
-    cell.a = '''
-    12.5 0.0 0.0
-      -6.249999999999998 10.825317547305485 0.0
-      0.0 0.0 20.0'''
-    cell.unit = 'A'
+    from ase.lattice.hexagonal import Graphene 
     
-    cell.basis = 'gth-dzv'
-    cell.pseudo = 'gth-pade'
-    cell.ke_cutoff = 100
-    cell.exp_to_discard=0.1
-    cell.verbose = 6
-    # cell.dimension = 2 
-    cell.build()
-    
-    # mf = dft.RKS(cell).density_fit()
-    # mf.xc = 'pbe'
-    # mf.with_df._cderi_to_save = 'hbn_c2_pbc_gdf.h5'
-    # mf.chkfile = 'hbn_c2.chk'
-    # dm = mf.from_chk('hbn_c2.chk')
-    
-    # mf.kernel(dm)
-    # mf.kernel()
-    
-    from pyscf.pbc.scf.chkfile import load_scf
-    cell, scf_res = load_scf('hbn_c2.chk')
-    cell.verbose = 6
-    mf = dft.RKS(cell).density_fit()
-    mf.xc = 'pbe'
-    mf.mo_coeff = scf_res['mo_coeff']
-    mf.mo_energy = scf_res['mo_energy']
-    mf.mo_occ = scf_res['mo_occ']
-    mf.e_tot = scf_res['e_tot']
-    mf.converged = True
-    energy_nuc = mf.energy_nuc()
-    
-    nocc = cell.nelectron//2
-    nmo = mf.mo_energy.size
-    nvir = nmo - nocc
-    print('HOMO E: ', mf.mo_energy[nocc-1], 'LUMO E: ', mf.mo_energy[nocc])
-    
-    # Using P-M to mix and localize the HOMO/LUMO
-    # from pyscf import lo
-    # idcs = np.ix_(np.arange(nmo), [nocc-1, nocc])
-    # mo_init = lo.PM(cell, mf.mo_coeff[idcs])
-    # C_loc = mo_init.kernel()
-    # lib.chkfile.dump('hbn_c2.chk', 'C_loc', C_loc)
-    
-    #DFT took 5 min
-    #CRPA+CASCI took 32 min
-    
-    C_loc = lib.chkfile.load('hbn_c2.chk', 'C_loc')
-    
-    mycRPA = cRPA(mf, 'hbn_c2_pbc_gdf.h5', loc_coeff = C_loc)
-    my_unscreened_eris = mycRPA.kernel(screened = False)
-    print('hBN+C2 C2pz unscreened ERIs (eV)', my_unscreened_eris*27.2114)
-    my_screened_eris = mycRPA.kernel(screened = True)
-    print('hBN+C2 C2pz screened ERIs (eV)', my_screened_eris*27.2114)
-    
-    from pyscf import mcscf, fci
-    
-    ncas  = 2
-    ne_act = 2
-    mycas = cRPA_CASCI(mf, ncas, ne_act, screened_ERIs = my_screened_eris)
-    mycas.canonicalization = False
-    mycas.verbose = 6
-    orbs = np.hstack( ( np.hstack( (mf.mo_coeff[:, :nocc-1], C_loc) ), mf.mo_coeff[:, nocc+1:] ) )
-    mycas.fcisolver.nroots = 4
-    mycas.kernel(orbs)
-  
-    h1, ecore = mycas.get_h1eff(orbs)
-    print('cRPA_CASCI h1', h1)
-    print('diagonalized cRPA_CASCI h1', np.linalg.eigh(h1))
-
-
-
-
-
-
-
-
-
-    
-    print('Now for the custom H(h1, h2)...')
-    # #https://pyscf.org/user/ci.html
-    from functools import reduce  
-    ncore = nocc-1
-    mo_core = mf.mo_coeff[:,:ncore]
-    mo_cas = C_loc
-    hcore = mf.get_hcore()
-    energy_nuc = mf.energy_nuc()
-    ecore = energy_nuc
-    core_dm = np.dot(mo_core, mo_core.conj().T) * 2
-    corevhf = mf.get_veff(cell, core_dm)
-    # corevhf = lib.chkfile.load('hbn.chk', 'corevhf')
-    ecore += np.einsum('ij,ji', core_dm, hcore).real
-    ecore += np.einsum('ij,ji', core_dm, corevhf).real * .5
-    h1 = reduce(np.dot, (mo_cas.conj().T, hcore+corevhf, mo_cas))
-    
-    print('H(h1,h2) h1', h1)
-    print('diagonalized H(h1, h2) h1', np.linalg.eig(h1))
-    
-    h2 = my_screened_eris
-    
-    cell = gto.M() #need a fresh mol object so fci doesn't get huge system's mol info and crash due to lack of memory
-    # "incore_anyway=True ensures the customized Hamiltonian (the _eri attribute)
-    # is used.  Without this parameter, the MO integral transformation used in
-    # subsequent post-HF calculations may
-    # ignore the customized Hamiltonian if there is not enough memory."
-    cell.incore_anyway = True
-    cell.nelectron = ne_act
-    
-    cisolver = fci.direct_spin1.FCI()
-    cisolver.nroots = 4
-    
-    e, fcivec = cisolver.kernel(h1, h2, ncas, ne_act, ecore=ecore)
-    print(e)
-    for i, c in enumerate(fcivec):
-        print('state = %d, E = %.9f, S^2=%.4f' %
-              (i, e[i], fci.spin_op.spin_square(c, ncas, ne_act)[0]))
+    with open('screened.txt', 'w') as scr:
+        with open('unscreened.txt', 'w') as uscr:
+            for i in range(2,6):
+                nx = i
+                ny = i
+                alat = 2.50
+                clat = 20.0 
+                
+                ase_atoms = Graphene(symbol= 'C', latticeconstant={'a':alat,'c':clat}, size=(nx,ny,1))
+                
+                with_c2 = True
+                
+                if with_c2:
+                    # BN + C2
+                    ase_atoms.symbols = 'CC'+'BN'*(nx*ny-1)
+                    filename = 'hbn_%d%d1_c2.dat'%(nx,ny)
+                else:
+                    # Pure BN
+                    ase_atoms.symbols = 'BN'*(nx*ny)
+                    filename = 'hbn_%d%d1.dat'%(nx,ny)
+                
+                import pyscf.pbc.tools.pyscf_ase as pyscf_ase
+                cell = gto.Cell()
+                cell.atom = pyscf_ase.ase_atoms_to_pyscf(ase_atoms)
+                cell.a = ase_atoms.cell
+                
+                cell.basis = 'gth-szv'
+                cell.pseudo = 'gth-pade'
+                cell.ke_cutoff = 80.
+                cell.verbose = 5
+                cell.build()
+                
+                mf = dft.RKS(cell).density_fit()
+                mf.xc = 'pbe'
+                # mf.with_df._cderi_to_save = 'hbn_c2_pbc_gdf_{}x{}x1.h5'.format(nx,ny)
+                # mf.chkfile = 'hbn_c2_gdf_{}x{}x1.chk'.format(nx,ny)
+                dm = mf.from_chk('hbn_c2_gdf_{}x{}x1.chk'.format(nx,ny))
+                
+                mf.kernel(dm)
+                # mf.kernel()
+                
+                # from pyscf.pbc.scf.chkfile import load_scf
+                # cell, scf_res = load_scf('hbn_c2_gdf_{}x{}x1.chk'.format(nx,ny))
+                # cell.verbose = 6
+                # mf = dft.RKS(cell).density_fit()
+                # mf.with_df._cderi = 'hbn_c2_pbc_gdf_{}x{}x1.h5'.format(nx,ny)
+                # mf.xc = 'pbe'
+                # mf.mo_coeff = scf_res['mo_coeff']
+                # mf.mo_energy = scf_res['mo_energy']
+                # mf.mo_occ = scf_res['mo_occ']
+                # mf.e_tot = scf_res['e_tot']
+                # mf.converged = True
+                # energy_nuc = mf.energy_nuc()
+                
+                nocc = cell.nelectron//2
+                nmo = mf.mo_energy.size
+                nvir = nmo - nocc
+                print('HOMO E: ', mf.mo_energy[nocc-1], 'LUMO E: ', mf.mo_energy[nocc])
+                
+                # Using P-M to mix and localize the HOMO/LUMO
+                # from pyscf import lo
+                # idcs = np.ix_(np.arange(nmo), [nocc-1, nocc])
+                # mo_init = lo.PM(cell, mf.mo_coeff[idcs])
+                # C_loc = mo_init.kernel()
+                # lib.chkfile.dump('hbn_c2_{}x{}x1.chk'.format(nx,ny), 'C_loc', C_loc)
+                
+                C_loc = lib.chkfile.load('hbn_c2_{}x{}x1.chk'.format(nx,ny), 'C_loc')
+                
+                mycRPA = cRPA(mf, 'hbn_c2_pbc_gdf_{}x{}x1.h5'.format(nx,ny), loc_coeff = C_loc)
+                my_unscreened_eris = mycRPA.kernel(screened = False)
+                # print('hBN+C2 C2pz unscreened ERIs (eV)', my_unscreened_eris*27.2114)
+                my_screened_eris = mycRPA.kernel(screened = True)
+                # print('hBN+C2 C2pz screened ERIs (eV)', my_screened_eris*27.2114)
+                
+                from pyscf import mcscf, fci
+             
+                print('cRPA_CASCI, unscreened U')
+                ncas  = 2
+                ne_act = 2
+                mycas = cRPA_CASCI(mf, ncas, ne_act, screened_ERIs = my_unscreened_eris)
+                mycas.canonicalization = False
+                mycas.verbose = 6
+                orbs = np.hstack( ( np.hstack( (mf.mo_coeff[:, :nocc-1], C_loc) ), mf.mo_coeff[:, nocc+1:] ) )
+                mycas.fcisolver.nroots = 4
+                mycas.kernel(orbs)
+                uscr.write('{} {} {}'.format(nx, mycas.e_tot, (my_unscreened_eris[0,0,0,0]+my_unscreened_eris[1,1,1,1])/2))
+                uscr.write('\n')
+                
+                print('cRPA_CASCI, screened U')
+                mycas = cRPA_CASCI(mf, ncas, ne_act, screened_ERIs = my_screened_eris)
+                mycas.canonicalization = False
+                mycas.verbose = 6
+                # orbs = np.hstack( ( np.hstack( (mf.mo_coeff[:, :nocc-1], C_loc) ), mf.mo_coeff[:, nocc+1:] ) )
+                mycas.fcisolver.nroots = 4
+                mycas.kernel(orbs)
+                scr.write('{} {} {}'.format(nx, mycas.e_tot, (my_screened_eris[0,0,0,0]+my_screened_eris[1,1,1,1])/2))
+                scr.write('\n')
