@@ -204,7 +204,9 @@ with open('screened_dzv_opt_struct_{}.txt'.format(i), 'w') as scr:
         cell.unit = 'b'
         atoms = open("atoms_{}.txt".format(i), "r")
         cell_abc = open("cell_{}.txt".format(i), "r")
-        
+        cell.atom = atoms.read()
+        cell.a = cell_abc.read()
+                
         cell.basis = 'gth-dzv'
         cell.pseudo = 'gth-pade'
         cell.ke_cutoff = 80.
