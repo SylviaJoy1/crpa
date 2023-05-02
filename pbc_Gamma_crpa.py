@@ -104,7 +104,7 @@ class cRPA(lib.StreamObject):
         return U
     
     def kernel(self, screened = True):
-        self.ERIs = kernel(self, M, screened)
+        self.ERIs = kernel(self, self.M, screened)
         return self.ERIs
 
 def h1e_for_cas(casci, mo_coeff=None, ncas=None, ncore=None):
