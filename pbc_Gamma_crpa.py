@@ -74,7 +74,7 @@ class cRPA(lib.StreamObject):
         self.cell = mf.cell
         # self.chkfile    =   mf.chkfile
         self.df_file = df_file
-        self.M = madelung(mf.cell)
+        self.M = madelung(mf.cell, kpts=[0,0,0])
         self.mo_coeff   =   mf.mo_coeff
         
         if loc_coeff is None:
