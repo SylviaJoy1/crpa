@@ -66,7 +66,7 @@ def get_Lpq(mf,  df_file, loc_coeff=None):
     
     return canon_Lov, loc_Lpq
    
-#TODO: include ROKS, molecular code
+#TODO: include ROKS
 class cRPA(lib.StreamObject):
     def __init__(self, mf, df_file, loc_coeff=None):
         self.mf = mf
