@@ -29,9 +29,10 @@ def kernel(crpa, M=0, screened = True):
             i_mat += (1-np.sum(np.abs(U_occ[i,:])**2)*np.sum(np.abs(U_vir[a,:])**2))*np.outer(canon_Lov[:,i,a]/(e_mo_occ[i] - e_mo_vir[a]), canon_Lov[:,i,a])
                 
     i_tilde = np.linalg.inv(np.eye(naux)-4.0*i_mat)
-       
+    
+    print('shape of M', np.shape(M))   
     scr_U = einsum('Pij,PQ,Qkl->ijkl', loc_Lpq, i_tilde, loc_Lpq)
-    scr_M = M*einsum('Pij,PQ,Qkl->ijkl', loc_Lpq, i_tilde, loc_Lpq)/('Pij,Pkl->ijkl', loc_Lpq, loc_Lpq)
+    scr_M = M*einsum('Pij,PQ,Qkl->ijkl', loc_Lpq, i_tilde, loc_Lpq)/einsum('Pij,Pkl->ijkl', loc_Lpq, loc_Lpq)
     return scr_U + scr_M
 
 #Make the unitary transformation matrix from canonical to localized orbitals
@@ -296,6 +297,6 @@ if __name__ == '__main__':
     # create the process pool
     with Pool() as pool:
         # call the same function with different data in parallel
-        for result in pool.map(task, range(2,6)):
+        for result in pool.map(task, range(6,8)):
             # report the value to show progress
             print(result)
