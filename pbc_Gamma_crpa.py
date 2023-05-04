@@ -17,8 +17,10 @@ def kernel(crpa, M=0, screened = True):
     if not screened:
         unscr_U = einsum('Pij,Pkl->ijkl', loc_Lpq, loc_Lpq)
         for i in range(nact):
-            for j in range(nact):
+            for j in range(i):
                 unscr_U[i,i,j,j] += M
+                unscr_U[j,j,i,i] += M
+            unscr_U[i,i,i,i] += M
         return unscr_U
         
     U = crpa.make_U()
@@ -36,8 +38,13 @@ def kernel(crpa, M=0, screened = True):
     i_tilde = np.linalg.inv(np.eye(naux)-4.0*i_mat)
     
     scr_U = einsum('Pij,PQ,Qkl->ijkl', loc_Lpq, i_tilde, loc_Lpq)
-    scr_M = M*np.tile(einsum('Pii,PQ,Qjj->ij', loc_Lpq, i_tilde, loc_Lpq)/einsum('Pii,Pjj->ij', loc_Lpq, loc_Lpq), (2,2)).reshape((nact, nact, nact, nact)).transpose((0,2,1,3))
-    return scr_U + scr_M
+    scr_M = M*einsum('Pii,PQ,Qjj->ij', loc_Lpq, i_tilde, loc_Lpq)/einsum('Pii,Pjj->ij', loc_Lpq, loc_Lpq)
+    for i in range(nact):
+        for j in range(i):
+            scr_U[i,i,j,j] += scr_M[i,j]
+            scr_U[j,j,i,i] += scr_M[j,i]
+        scr_U[i,i,i,i] += scr_M[i,i]
+    return scr_U
 
 #Make the unitary transformation matrix from canonical to localized orbitals
 def make_U(mf, loc_coeff=None):
