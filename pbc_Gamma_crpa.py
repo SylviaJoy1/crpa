@@ -12,9 +12,14 @@ def kernel(crpa, M=0, screened = True):
     e_mo_vir = crpa.mo_energy[nocc:] 
     
     canon_Lov, loc_Lpq = crpa.get_Lpq()
+    nact = np.shape(loc_Lpq)[-1]
     
     if not screened:
-        return einsum('Pij,Pkl->ijkl', loc_Lpq, loc_Lpq)+M 
+        unscr_U = einsum('Pij,Pkl->ijkl', loc_Lpq, loc_Lpq)
+        for i in range(nact):
+            for j in range(nact):
+                unscr_U[i,i,j,j] += M
+        return unscr_U
         
     U = crpa.make_U()
     
@@ -30,9 +35,8 @@ def kernel(crpa, M=0, screened = True):
                 
     i_tilde = np.linalg.inv(np.eye(naux)-4.0*i_mat)
     
-    print('shape of M', np.shape(M))   
     scr_U = einsum('Pij,PQ,Qkl->ijkl', loc_Lpq, i_tilde, loc_Lpq)
-    scr_M = M*einsum('Pij,PQ,Qkl->ijkl', loc_Lpq, i_tilde, loc_Lpq)/einsum('Pij,Pkl->ijkl', loc_Lpq, loc_Lpq)
+    scr_M = M*np.tile(einsum('Pii,PQ,Qjj->ij', loc_Lpq, i_tilde, loc_Lpq)/einsum('Pii,Pjj->ij', loc_Lpq, loc_Lpq), (2,2)).reshape((nact, nact, nact, nact)).transpose((0,2,1,3))
     return scr_U + scr_M
 
 #Make the unitary transformation matrix from canonical to localized orbitals
@@ -206,14 +210,14 @@ if __name__ == '__main__':
                 
                 mf = dft.RKS(cell).density_fit()
                 mf.xc = 'pbe'
-                mf.with_df._cderi_to_save = 'hbn_c2_dzv_{}.h5'.format(nx)
-                # mf.with_df._cderi = 'hbn_c2_dzv_{}.h5'.format(nx)
+#                mf.with_df._cderi_to_save = 'hbn_c2_dzv_{}.h5'.format(nx)
+                mf.with_df._cderi = 'hbn_c2_dzv_{}.h5'.format(nx)
                 # mf.chkfile = 'hbn_c2_dzv_{}.chk'.format(nx)
-                # dm = mf.from_chk('hbn_c2_dzv_{}.chk'.format(nx))
-                mf.chkfile = 'hbn_c2_dzv_{}.chk'.format(nx)
+                dm = mf.from_chk('hbn_c2_dzv_{}.chk'.format(nx))
+#                mf.chkfile = 'hbn_c2_dzv_{}.chk'.format(nx)
                  
-                # mf.kernel(dm)
-                mf.kernel()
+                mf.kernel(dm)
+#                mf.kernel()
                 
                 # from pyscf.pbc.scf.chkfile import load_scf
                 # cell, scf_res = load_scf('hbn_c2_gdf_{}x{}x1.chk'.format(nx,ny))
@@ -234,11 +238,11 @@ if __name__ == '__main__':
                 print('HOMO E: ', mf.mo_energy[nocc-1], 'LUMO E: ', mf.mo_energy[nocc])
                 
                 # Using P-M to mix and localize the HOMO/LUMO
-                from pyscf import lo
-                idcs = np.ix_(np.arange(nmo), [nocc-1, nocc])
-                mo_init = lo.PM(cell, mf.mo_coeff[idcs])
-                C_loc = mo_init.kernel()
-                lib.chkfile.dump('hbn_c2_dzv_{}.chk'.format(nx), 'C_loc', C_loc)
+#                from pyscf import lo
+#                idcs = np.ix_(np.arange(nmo), [nocc-1, nocc])
+#                mo_init = lo.PM(cell, mf.mo_coeff[idcs])
+#                C_loc = mo_init.kernel()
+#                lib.chkfile.dump('hbn_c2_dzv_{}.chk'.format(nx), 'C_loc', C_loc)
                 
                 C_loc = lib.chkfile.load('hbn_c2_dzv_{}.chk'.format(nx), 'C_loc')
                 
@@ -297,6 +301,6 @@ if __name__ == '__main__':
     # create the process pool
     with Pool() as pool:
         # call the same function with different data in parallel
-        for result in pool.map(task, range(6,8)):
+        for result in pool.map(task, range(2,3)):
             # report the value to show progress
             print(result)
