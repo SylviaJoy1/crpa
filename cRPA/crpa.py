@@ -129,7 +129,7 @@ def h1e_for_cas(casci, mo_coeff=None, ncas=None, ncore=None):
     '''CAS space one-electron hamiltonian with DFT h1e (no double counting correction)
     Args:
         casci: a CASSCF/CASCI object or RHF object
-
+    
     Returns:
         A tuple, the first is the effective one-electron DFT hamiltonian defined in CAS space,
         the second is the electronic energy from core.
@@ -140,7 +140,7 @@ def h1e_for_cas(casci, mo_coeff=None, ncas=None, ncore=None):
     if ncore is None: ncore = casci.ncore
     mo_core = mo_coeff[:,:ncore]
     mo_cas = mo_coeff[:,ncore:ncore+ncas]
-
+    
     hcore = casci.get_hcore()
     veff = casci._scf.get_veff()
     energy_core = casci.energy_nuc()
@@ -156,13 +156,12 @@ def h1e_for_cas(casci, mo_coeff=None, ncas=None, ncore=None):
 
     # The core energy is meaningless for now, but doesn't matter for excitation energies
     return h1eff, energy_core
-
+        
 from pyscf import mcscf
 class cRPA_CASCI(mcscf.casci.CASCI):
     def __init__(self, mf_or_mol, ncas, nelecas, ncore=None, screened_ERIs=None):
         super().__init__(mf_or_mol, ncas, nelecas, ncore=None)
         self.screened_ERIs = screened_ERIs
-        self.mf_or_mol = mf_or_mol
         
     def get_h2eff(self, mo_coeff=None):
         '''Compute the active space two-particle Hamiltonian.
@@ -175,20 +174,92 @@ class cRPA_CASCI(mcscf.casci.CASCI):
             return self.ao2mo(mo_coeff)
             #this is not using density fitting.
         return self.screened_ERIs
-    #if it is not RHF-based, we have to modify the h1 used in CASCI
-    if isinstance(self.mf_or_mol, (pyscf.dft.rks.RKS, pyscf.pbc.dft.RKS)):
-        def get_veff(self, mol=None, dm=None, hermi=1):
-            if mol is None: mol = self.mol
-            if dm is None:
-                mocore = self.mo_coeff[:,:self.ncore]
-                dm = numpy.dot(mocore, mocore.conj().T) * 2
-            # use get_veff even if _scf is a DFT object
-            return self._scf.get_veff(mol, dm, hermi=hermi)
+    
+    #comment out the following h1 stuff if starting from HF
+    def get_veff(self, mol=None, dm=None, hermi=1):
+        if mol is None: mol = self.mol
+        if dm is None:
+            mocore = self.mo_coeff[:,:self.ncore]
+            dm = numpy.dot(mocore, mocore.conj().T) * 2
+        # use get_veff even if _scf is a DFT object
+        return self._scf.get_veff(mol, dm, hermi=hermi)
 
-        get_h1cas = h1e_for_cas  = h1e_for_cas
+    get_h1cas = h1e_for_cas = h1e_for_cas
 
-        def get_h1eff(self, mo_coeff=None, ncas=None, ncore=None):
-            return self.h1e_for_cas(mo_coeff, ncas, ncore)
+    def get_h1eff(self, mo_coeff=None, ncas=None, ncore=None):
+        return self.h1e_for_cas(mo_coeff, ncas, ncore)
+        
+#def h1e_for_cas(casci, mo_coeff=None, ncas=None, ncore=None):
+#    from functools import reduce
+#    '''CAS space one-electron hamiltonian with DFT h1e (no double counting correction)
+#    Args:
+#        casci: a CASSCF/CASCI object or RHF object
+#
+#    Returns:
+#        A tuple, the first is the effective one-electron DFT hamiltonian defined in CAS space,
+#        the second is the electronic energy from core.
+#    See also: pyscf/mcscf/casci.py
+#    '''
+#    if mo_coeff is None: mo_coeff = casci.mo_coeff
+#    if ncas is None: ncas = casci.ncas
+#    if ncore is None: ncore = casci.ncore
+#    mo_core = mo_coeff[:,:ncore]
+#    mo_cas = mo_coeff[:,ncore:ncore+ncas]
+#
+#    hcore = casci.get_hcore()
+#    veff = casci._scf.get_veff()
+#    energy_core = casci.energy_nuc()
+#    #:if mo_core.size == 0:
+#    #:    corevhf = 0
+#    #:else:
+#    #:    core_dm = numpy.dot(mo_core, mo_core.conj().T) * 2
+#    #:    corevhf = casci.get_veff(casci.mol, core_dm)
+#    #:    energy_core += numpy.einsum('ij,ji', core_dm, hcore).real
+#    #:    energy_core += numpy.einsum('ij,ji', core_dm, corevhf).real * .5
+#    #:h1eff = reduce(numpy.dot, (mo_cas.conj().T, hcore+corevhf, mo_cas))
+#    h1eff = reduce(np.dot, (mo_cas.conj().T, hcore+veff, mo_cas))
+#
+#    # The core energy is meaningless for now, but doesn't matter for excitation energies
+#    return h1eff, energy_core
+#
+#from pyscf import mcscf
+#from pyscf.pbc import dft as pbcdft
+#from pyscf import dft
+#class cRPA_CASCI(mcscf.casci.CASCI):
+#    def __init__(self, mf_or_mol, ncas, nelecas, ncore=None, screened_ERIs=None):
+#        super().__init__(mf_or_mol, ncas, nelecas, ncore=None)
+#        self.screened_ERIs = screened_ERIs
+##        self.mf_or_mol = mf_or_mol
+#
+#    def get_h2eff(self, mo_coeff=None):
+#        '''Compute the active space two-particle Hamiltonian.
+#
+#        Note It is different to get_h2cas when df.approx_hessian is applied.
+#        in which get_h2eff function returns the DF integrals while get_h2cas
+#        returns the regular 2-electron integrals.
+#        '''
+#        if self.screened_ERIs is None:
+#            return self.ao2mo(mo_coeff)
+#            #this is not using density fitting.
+#        return self.screened_ERIs
+#
+#    #if mf is not RHF-based, we have to modify the h1 used in CASCI
+#    def get_veff(self, mol=None, dm=None, hermi=1):
+#        if mol is None: mol = self.mol
+#        if dm is None:
+#            mocore = self.mo_coeff[:,:self.ncore]
+#            dm = numpy.dot(mocore, mocore.conj().T) * 2
+#        # use get_veff even if _scf is a DFT object
+##        if isinstance(self._scf, (dft.rks.RKS,pbcdft.rks.RKS)):
+#        return self._scf.get_veff(mol, dm, hermi=hermi)
+##        else:
+##            vj, vk = self.get_jk(mol, dm, hermi)
+##            return vj - vk * .5
+#
+#        get_h1cas = h1e_for_cas  = h1e_for_cas
+#
+#        def get_h1eff(self, mo_coeff=None, ncas=None, ncore=None):
+#            return self.h1e_for_cas(mo_coeff, ncas, ncore)
             
 if __name__ == '__main__':
     from pyscf import gto, scf, dft

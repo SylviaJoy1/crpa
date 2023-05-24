@@ -3,7 +3,7 @@ import numpy as np
 from pyscf import lib
 einsum = lib.einsum
 from pyscf.pbc.tools.pbc import madelung
-from crpa import cRPA, cRPA_CASCI
+from crpa import cRPA
 
 def kernel(crpa, M=0, screened = True):
     nmo = crpa.nmo
@@ -102,6 +102,7 @@ if __name__ == '__main__':
     
     #hBN+C2
     from pyscf.pbc import gto, dft
+    from crpa import cRPA_CASCI
     from ase.lattice.hexagonal import Graphene 
     
     import multiprocessing
@@ -129,14 +130,14 @@ if __name__ == '__main__':
                 
                 mf = dft.RKS(cell).density_fit()
                 mf.xc = 'pbe'
-                mf.with_df._cderi_to_save = 'hbn_c2_dzv_{}.h5'.format(nx)
-#                mf.with_df._cderi = 'hbn_c2_dzv_{}.h5'.format(nx)
+#                mf.with_df._cderi_to_save = 'hbn_c2_dzv_{}.h5'.format(nx)
+                mf.with_df._cderi = 'hbn_c2_dzv_{}.h5'.format(nx)
                 # mf.chkfile = 'hbn_c2_dzv_{}.chk'.format(nx)
-#                dm = mf.from_chk('hbn_c2_dzv_{}.chk'.format(nx))
-                mf.chkfile = 'hbn_c2_dzv_{}.chk'.format(nx)
+                dm = mf.from_chk('hbn_c2_dzv_{}.chk'.format(nx))
+#                mf.chkfile = 'hbn_c2_dzv_{}.chk'.format(nx)
                  
-#                mf.kernel(dm)
-                mf.kernel()
+                mf.kernel(dm)
+#                mf.kernel()
                 
                 # from pyscf.pbc.scf.chkfile import load_scf
                 # cell, scf_res = load_scf('hbn_c2_gdf_{}x{}x1.chk'.format(nx,ny))
@@ -157,11 +158,11 @@ if __name__ == '__main__':
                 print('HOMO E: ', mf.mo_energy[nocc-1], 'LUMO E: ', mf.mo_energy[nocc])
                 
                 # Using P-M to mix and localize the HOMO/LUMO
-                from pyscf import lo
-                idcs = np.ix_(np.arange(nmo), [nocc-1, nocc])
-                mo_init = lo.PM(cell, mf.mo_coeff[idcs])
-                C_loc = mo_init.kernel()
-                lib.chkfile.dump('hbn_c2_dzv_{}.chk'.format(nx), 'C_loc', C_loc)
+#                from pyscf import lo
+#                idcs = np.ix_(np.arange(nmo), [nocc-1, nocc])
+#                mo_init = lo.PM(cell, mf.mo_coeff[idcs])
+#                C_loc = mo_init.kernel()
+#                lib.chkfile.dump('hbn_c2_dzv_{}.chk'.format(nx), 'C_loc', C_loc)
                 
                 C_loc = lib.chkfile.load('hbn_c2_dzv_{}.chk'.format(nx), 'C_loc')
                 
