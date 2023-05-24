@@ -176,7 +176,7 @@ class cRPA_CASCI(mcscf.casci.CASCI):
             #this is not using density fitting.
         return self.screened_ERIs
     #if it is not RHF-based, we have to modify the h1 used in CASCI
-    if isinstance(mf, (pyscf.dft.rks.RKS, pyscf.pbc.dft.RKS)):
+    if isinstance(self.mf_or_mol, (pyscf.dft.rks.RKS, pyscf.pbc.dft.RKS)):
         def get_veff(self, mol=None, dm=None, hermi=1):
             if mol is None: mol = self.mol
             if dm is None:
