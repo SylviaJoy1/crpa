@@ -176,19 +176,19 @@ class cRPA_CASCI(mcscf.casci.CASCI):
             #this is not using density fitting.
         return self.screened_ERIs
     #if it is not RHF-based, we have to modify the h1 used in CASCI
-    
-    def get_veff(self, mol=None, dm=None, hermi=1):
-        if mol is None: mol = self.mol
-        if dm is None:
-            mocore = self.mo_coeff[:,:self.ncore]
-            dm = numpy.dot(mocore, mocore.conj().T) * 2
-        # use get_veff even if _scf is a DFT object
-        return self._scf.get_veff(mol, dm, hermi=hermi)
+    if isinstance(mf, (pyscf.dft.rks.RKS, pyscf.pbc.dft.RKS)):
+        def get_veff(self, mol=None, dm=None, hermi=1):
+            if mol is None: mol = self.mol
+            if dm is None:
+                mocore = self.mo_coeff[:,:self.ncore]
+                dm = numpy.dot(mocore, mocore.conj().T) * 2
+            # use get_veff even if _scf is a DFT object
+            return self._scf.get_veff(mol, dm, hermi=hermi)
 
-    get_h1cas = h1e_for_cas  = h1e_for_cas
+        get_h1cas = h1e_for_cas  = h1e_for_cas
 
-    def get_h1eff(self, mo_coeff=None, ncas=None, ncore=None):
-        return self.h1e_for_cas(mo_coeff, ncas, ncore)
+        def get_h1eff(self, mo_coeff=None, ncas=None, ncore=None):
+            return self.h1e_for_cas(mo_coeff, ncas, ncore)
             
 if __name__ == '__main__':
     from pyscf import gto, scf, dft
