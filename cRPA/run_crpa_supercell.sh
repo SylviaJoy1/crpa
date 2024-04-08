@@ -1,11 +1,11 @@
 #!/bin/bash
 #SBATCH --account=berkelbach
-#SBATCH --job-name hbn_c2_7_dzvp
+#SBATCH --job-name hbn_c2_6_7_dzvp
 #SBATCH --time=48:30:00
 #SBATCH --cpus-per-task=32
 #SBATCH --ntasks=1
 #SBATCH --mem=700000MB 
-#SBATCH --array=7
+#SBATCH --array=6-7
 
 #SBATCH --mail-type=begin
 #SBATCH --mail-type=end

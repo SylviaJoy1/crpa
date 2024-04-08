@@ -112,8 +112,10 @@ if __name__ == '__main__':
     i =  sys.argv[1]
     basis = 'dzvp'
     fnl = 'PBE'
-    with open('screened_{}_{}.txt'.format(basis, i), 'w') as scr:
-        with open('unscreened_{}_{}.txt'.format(basis, i), 'w') as uscr:
+    if fnl == 'HF':
+        print('WARNING!! comment out h1 part in crpa.py')
+    with open('screened_{}_{}_{}.txt'.format(fnl, basis, i), 'w') as scr:
+        with open('unscreened_{}_{}_{}.txt'.format(fnl, basis, i), 'w') as uscr:
             nx = i
             ny = i
             cell = gto.Cell()
@@ -178,8 +180,8 @@ if __name__ == '__main__':
                 
                 from pyscf.tools import cubegen
                 for orbnum in range(2):
-                    cubegen.orbital(cell, f'canon_{basis}_{i}_mo{orbnum+1}.cube', mf.mo_coeff[idcs][:,orbnum])
-                    cubegen.orbital(cell, f'loc_{basis}_{i}_mo{orbnum+1}.cube', C_loc[:,orbnum])
+                    cubegen.orbital(cell, f'canon_{fnl}_{basis}_{i}_mo{orbnum+1}.cube', mf.mo_coeff[idcs][:,orbnum])
+                    cubegen.orbital(cell, f'loc_{fnl}_{basis}_{i}_mo{orbnum+1}.cube', C_loc[:,orbnum])
             
             mycRPA = cRPA_supercell(mf, gdf_fname, loc_coeff = C_loc)
             my_unscreened_eris = mycRPA.kernel(screened = False)

@@ -205,17 +205,16 @@ if __name__ == '__main__':
         with open('unscreened_{}_{}_{}.txt'.format(fnl, basis, i), 'w') as uscr:
             nx = i
             ny = i
-            cell = gto.Cell()
-            cell.unit = 'b'
+            cell = gto.Mole()
+            cell.unit = 'A'
             atoms = open(atoms_cell_path+"{}.txt".format(i), "r")
-            cell_abc = open(atoms_cell_path+"{}.txt".format(i), "r")
             cell.atom = atoms.read()
-            cell.a = cell_abc.read()
-            
-            cell.basis = 'gth-'+basis
+            cell.symmetry = True 
+            cell.basis = basis
             cell.verbose = 9
             cell.build()
-                        
+            print('symmetry of mf', cell.topgroup)
+
             gdf = df.GDF(cell)
             gdf_fname = '{}_{}_{}.h5'.format(fnl, basis, i)
             gdf._cderi_to_save = gdf_fname
@@ -245,8 +244,8 @@ if __name__ == '__main__':
             nvir = nmo - nocc
             print('HOMO E: ', mf.mo_energy[nocc-1], 'LUMO E: ', mf.mo_energy[nocc])
             
-            min_orb = nocc-i//2
-            max_orb = nocc+(i//2-1)
+            min_orb = nocc-int(i)//2
+            max_orb = nocc+(int(i)//2-1)
             C_loc = lib.chkfile.load(chkfname, 'C_loc')
             if C_loc is None:
                 # Using P-M to mix and localize the HOMO/LUMO
@@ -254,7 +253,7 @@ if __name__ == '__main__':
                 #2: nocc-1, nocc
                 #4: nocc-2, nocc-1, nocc, nocc+1
                 #6: nocc-3, nocc-2, nocc-1, nocc, nocc+1, nocc+2
-                idcs = np.ix_(np.arange(nmo), [min_orb, max_orb])
+                idcs = np.ix_(np.arange(nmo), [x for x in range(min_orb, max_orb+1)])
 
                 from pyscf.tools import mo_mapping
                 comp = mo_mapping.mo_comps('C 2pz', cell, mf.mo_coeff)
@@ -267,29 +266,50 @@ if __name__ == '__main__':
                 lib.chkfile.dump(chkfname, 'C_loc', C_loc)
                 
                 from pyscf.tools import cubegen
-                for orbnum in range(i):
+                for orbnum in range(int(i)):
                     cubegen.orbital(cell, f'canon_{basis}_{i}_mo{orbnum+1}.cube', mf.mo_coeff[idcs][:,orbnum])
                     cubegen.orbital(cell, f'loc_{basis}_{i}_mo{orbnum+1}.cube', C_loc[:,orbnum])
             
-            mycRPA = cRPA_supercell(mf, gdf_fname, loc_coeff = C_loc)
+            mycRPA = cRPA(mf, gdf_fname, loc_coeff = C_loc)
             my_unscreened_eris = mycRPA.kernel(screened = False)
             my_screened_eris = mycRPA.kernel(screened = True)
-            #print('hBN+C2 C2pz unscreened ERIs (eV)', my_unscreened_eris*27.2114)
-            #print('hBN+C2 C2pz screened ERIs (eV)', my_screened_eris*27.2114)
             
             from pyscf import mcscf, fci
          
             uscr.write('cRPA_CASCI, unscreened U \n')
-            ncas  = i
-            ne_act = i
+            ncas  = int(i)
+            ne_act = int(i)
             mycas = cRPA_CASCI(mf, ncas, ne_act, screened_ERIs = my_unscreened_eris)
             mycas.canonicalization = False
             mycas.verbose = 6
-            orbs = np.hstack( ( np.hstack( (mf.mo_coeff[:, :min_orb], C_loc) ), mf.mo_coeff[:, max_orb:] ) )
-            mycas.fcisolver.nroots = 3
+            orbs = np.hstack( ( np.hstack( (mf.mo_coeff[:, :min_orb], C_loc) ), mf.mo_coeff[:, max_orb+1:] ) )
+
+            #mycas.wfnsym = 'A1g'
+            #mycas.nroots = 2
+            #mycas1 = fci.addons.fix_spin_(mycas, ss=0)
+            #mycas1.kernel(orbs)
+
+            #mycas.wfnsym = 'B1u'
+            #mycas.nroots = 1
+            #mycas2 = fci.addons.fix_spin_(mycas, ss=0)
+            #mycas2.kernel(orbs)
+
+            #mycas.fcisolver = fci.direct_spin1_symm.FCI(cell)
+            mycas.fcisolver.nroots = 5
+            #mycas.fcisolver.wfnsym = 'B1u'
+            
+            #weights = [.5, .5]
+            #solver1 = fci.direct_spin1_symm.FCI(cell)
+            #solver1.wfnsym= 'B1u'
+            #solver1.spin = 0
+            #solver2 = fci.direct_spin1_symm.FCI(cell)
+            #solver2.wfnsym= 'A1g'
+            #solver2.spin = 0
+            #mcscf.addons.state_average_mix_(mycas, [solver1, solver2], weights)
+            
             mycas.kernel(orbs)
-            uscr.write('t={} \n'.format(mycas.get_h1eff()))
-            uscr.write('n={} Exc={} U={}'.format(nx, mycas.e_tot, (my_unscreened_eris[0,0,0,0]+my_unscreened_eris[1,1,1,1])/2))
+            
+            uscr.write('n={} Exc={} U={}'.format(nx, mycas.e_tot, (my_unscreened_eris[0,0,0,0]+my_unscreened_eris[ncas-1, ncas-1, ncas-1, ncas-1])/2))
             uscr.write('\n')
             uscr.write('unscreened eris \n')
             for i in range(ncas):
@@ -305,11 +325,33 @@ if __name__ == '__main__':
             mycas = cRPA_CASCI(mf, ncas, ne_act, screened_ERIs = my_screened_eris)
             mycas.canonicalization = False
             mycas.verbose = 6
-            # orbs = np.hstack( ( np.hstack( (mf.mo_coeff[:, :nocc-1], C_loc) ), mf.mo_coeff[:, nocc+1:] ) )
-            mycas.fcisolver.nroots = 3
+            
+            #mycas.wfnsym = 'A1g'
+            #mycas.nroots = 2
+            #mycas1 = fci.addons.fix_spin_(mycas, ss=0)
+            #mycas1.kernel(orbs)
+            
+            #mycas.wfnsym = 'B1u'
+            #mycas.nroots = 1
+            #mycas2 = fci.addons.fix_spin_(mycas, ss=0)
+            #mycas2.kernel(orbs)
+
+            #mycas.fcisolver = fci.direct_spin1_symm.FCI(cell)
+            mycas.fcisolver.nroots = 5
+            #mycas.fcisolver.wfnsym = 'B1u'
+            
+            #weights = [.5, .5]
+            #solver1 = fci.direct_spin1_symm.FCI(cell)
+            #solver1.wfnsym= 'B1u'
+            #solver1.spin = 0
+            #solver2 = fci.direct_spin1_symm.FCI(cell)
+            #solver2.wfnsym= 'A1g'
+            #solver2.spin = 0
+            #mcscf.addons.state_average_mix_(mycas, [solver1, solver2], weights)
+
             mycas.kernel(orbs)
-            scr.write('t={} \n'.format(mycas.get_h1eff()))
-            scr.write('n={} Exc={} U={}'.format(nx, mycas.e_tot, (my_screened_eris[0,0,0,0]+my_screened_eris[1,1,1,1])/2))
+            
+            scr.write('n={} Exc={} U={}'.format(nx, mycas.e_tot, (my_screened_eris[0,0,0,0]+my_screened_eris[ncas-1, ncas-1, ncas-1, ncas-1])/2))
             scr.write('\n')
             scr.write('screened eris \n')
             for i in range(ncas):
