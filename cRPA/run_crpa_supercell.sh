@@ -20,5 +20,4 @@ export PYTHONPATH=/burg/berkelbach/users/sjb2225/build/pyscf:$PYTHONPATH
 export PYSCF_MAX_MEMORY=690000
 export OMP_NUM_THREADS=32
 
-arr=(${SLURM_ARRAY_TASK_ID})
-echo "$(python crpa_supercell.py ${arr[@]})" >> "hbn_c2_dzvp_"${arr[0]}".txt"
+python crpa_supercell.py ${SLURM_ARRAY_TASK_ID} > hbn_c2_dzvp_${SLURM_ARRAY_TASK_ID}.txt
