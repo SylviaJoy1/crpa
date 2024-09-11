@@ -3,6 +3,11 @@ import numpy as np
 from pyscf import lib
 einsum = lib.einsum
 
+from pyscf.dft.rks import KohnShamDFT
+from pyscf.pbc.dft.rks import KohnShamDFT as PBCKohnShamDFT
+from pyscf.scf.hf import RHF
+from pyscf.pbc.scf.hf import RHF as PBCRHF
+
 def kernel(crpa, screened = True):
     nmo = crpa.nmo
     nocc = crpa.nocc
@@ -133,23 +138,31 @@ def h1e_for_cas(casci, mo_coeff=None, ncas=None, ncore=None):
     if mo_coeff is None: mo_coeff = casci.mo_coeff
     if ncas is None: ncas = casci.ncas
     if ncore is None: ncore = casci.ncore
-    # mo_core = mo_coeff[:,:ncore]
+    mo_core = mo_coeff[:,:ncore]
     mo_cas = mo_coeff[:,ncore:ncore+ncas]
     
     hcore = casci.get_hcore()
-    veff = casci._scf.get_veff()
+    if isinstance(casci._scf, (KohnShamDFT, PBCKohnShamDFT)):
+        veff = casci._scf.get_veff()
     energy_core = casci.energy_nuc()
-    #:if mo_core.size == 0:
-    #:    corevhf = 0
-    #:else:
-    #:    core_dm = numpy.dot(mo_core, mo_core.conj().T) * 2
-    #:    corevhf = casci.get_veff(casci.mol, core_dm)
-    #:    energy_core += numpy.einsum('ij,ji', core_dm, hcore).real
-    #:    energy_core += numpy.einsum('ij,ji', core_dm, corevhf).real * .5
-    #:h1eff = reduce(numpy.dot, (mo_cas.conj().T, hcore+corevhf, mo_cas))
-    h1eff = reduce(np.dot, (mo_cas.conj().T, hcore+veff, mo_cas))
+    print('type of casci._scf', type(casci._scf))
+    if isinstance(casci._scf, (RHF, PBCRHF)):
+        if mo_core.size == 0:
+            corevhf = 0
+        else:
+            core_dm = np.dot(mo_core, mo_core.conj().T) * 2
+            corevhf = casci.get_veff(casci.mol, core_dm)
+            energy_core += np.einsum('ij,ji', core_dm, hcore).real
+            energy_core += np.einsum('ij,ji', core_dm, corevhf).real * .5
+    if isinstance(casci._scf, (RHF, PBCRHF)):
+        h1eff = reduce(np.dot, (mo_cas.conj().T, hcore+corevhf, mo_cas))
+    elif isinstance(casci._scf, (KohnShamDFT, PBCKohnShamDFT)):
+        h1eff = reduce(np.dot, (mo_cas.conj().T, hcore+veff, mo_cas))
+    else:
+        raise NotImplementedError("Unsupported mf class")
 
-    # The core energy is meaningless for now, but doesn't matter for excitation energies
+    # The core energy is meaningless for now for DFT,
+    # but doesn't matter for excitation energies
     return h1eff, energy_core
         
 from pyscf import mcscf
@@ -170,19 +183,25 @@ class cRPA_CASCI(mcscf.casci.CASCI):
             #this is not using density fitting.
         return self.screened_ERIs
     
-    #comment out the following h1 stuff if starting from HF
-#    def get_veff(self, mol=None, dm=None, hermi=1):
-#        if mol is None: mol = self.mol
-#        if dm is None:
-#            mocore = self.mo_coeff[:,:self.ncore]
-#            dm = np.dot(mocore, mocore.conj().T) * 2
-#        # use get_veff even if _scf is a DFT object
-#        return self._scf.get_veff(mol, dm, hermi=hermi)
-#
-#    get_h1cas = h1e_for_cas = h1e_for_cas
-#
-#    def get_h1eff(self, mo_coeff=None, ncas=None, ncore=None):
-#        return self.h1e_for_cas(mo_coeff, ncas, ncore)
+    def get_veff(self, mol=None, dm=None, hermi=1):
+        if mol is None: mol = self.mol
+        if dm is None:
+            mocore = self.mo_coeff[:,:self.ncore]
+            dm = np.dot(mocore, mocore.conj().T) * 2
+        if isinstance(self._scf, (RHF, PBCRHF)):
+            # don't call self._scf.get_veff because _scf might be DFT object
+            vj, vk = self.get_jk(mol, dm, hermi)
+            return vj - vk * .5
+        elif isinstance(self._scf, (KohnShamDFT, PBCKohnShamDFT)):
+            # use get_veff if _scf is a DFT object
+            return self._scf.get_veff(mol, dm, hermi=hermi)
+        else:
+            raise NotImplementedError("Unsupported mf class")
+    
+    get_h1cas = h1e_for_cas = h1e_for_cas
+
+    def get_h1eff(self, mo_coeff=None, ncas=None, ncore=None):
+            return self.h1e_for_cas(mo_coeff, ncas, ncore)
         
 if __name__ == '__main__':
     from pyscf import gto, scf, dft
@@ -209,11 +228,9 @@ if __name__ == '__main__':
             cell.unit = 'A'
             atoms = open(atoms_cell_path+"{}.txt".format(i), "r")
             cell.atom = atoms.read()
-            cell.symmetry = True 
             cell.basis = basis
             cell.verbose = 9
             cell.build()
-            print('symmetry of mf', cell.topgroup)
 
             gdf = df.GDF(cell)
             gdf_fname = '{}_{}_{}.h5'.format(fnl, basis, i)
@@ -223,17 +240,15 @@ if __name__ == '__main__':
 
             chkfname = '{}_{}_{}.chk'.format(fnl, basis, i)
             if os.path.isfile(chkfname):
-                mf = dft.RKS(cell)
+                #mf = dft.RKS(cell)
+                mf = scf.RHF(cell).density_fit()
                 mf.xc = fnl
-                mf.with_df = gdf
-                mf.with_df._cderi = gdf_fname
                 data = chkfile.load(chkfname, 'scf')
                 mf.__dict__.update(data)
             else:
-                mf = dft.RKS(cell)
+                #mf = dft.RKS(cell)
+                mf = scf.RHF(cell).density_fit()
                 mf.xc = fnl
-                mf.with_df = gdf
-                mf.with_df._cderi = gdf_fname
                 mf.conv_tol = 1e-12
                 mf.chkfile = chkfname
                 mf.kernel()
@@ -246,6 +261,7 @@ if __name__ == '__main__':
             
             min_orb = nocc-int(i)//2
             max_orb = nocc+(int(i)//2-1)
+            print('min_orb, max_orb', min_orb, max_orb)
             C_loc = lib.chkfile.load(chkfname, 'C_loc')
             if C_loc is None:
                 # Using P-M to mix and localize the HOMO/LUMO
@@ -257,11 +273,11 @@ if __name__ == '__main__':
 
                 from pyscf.tools import mo_mapping
                 comp = mo_mapping.mo_comps('C 2pz', cell, mf.mo_coeff)
-                C2pz_idcs = np.argsort(-comp)[:6]
+                C2pz_idcs = np.argsort(-comp)[:8]
                 for idx in C2pz_idcs:
-                    print(f'AO {idx} has {comp[idx]} C2pz character')
+                    print(f'MO {idx} has {comp[idx]} C2pz character')
 
-                mo_init = lo.PM(cell, mf.mo_coeff[idcs])
+                mo_init = lo.edmiston.EdmistonRuedenberg(cell, mf.mo_coeff[idcs])
                 C_loc = mo_init.kernel()
                 lib.chkfile.dump(chkfname, 'C_loc', C_loc)
                 
@@ -284,31 +300,10 @@ if __name__ == '__main__':
             mycas.verbose = 6
             orbs = np.hstack( ( np.hstack( (mf.mo_coeff[:, :min_orb], C_loc) ), mf.mo_coeff[:, max_orb+1:] ) )
 
-            #mycas.wfnsym = 'A1g'
-            #mycas.nroots = 2
-            #mycas1 = fci.addons.fix_spin_(mycas, ss=0)
-            #mycas1.kernel(orbs)
+            mycas.fcisolver.nroots = 4
+            mycas.kernel(orbs) 
+            #print('ci', mycas.ci)
 
-            #mycas.wfnsym = 'B1u'
-            #mycas.nroots = 1
-            #mycas2 = fci.addons.fix_spin_(mycas, ss=0)
-            #mycas2.kernel(orbs)
-
-            #mycas.fcisolver = fci.direct_spin1_symm.FCI(cell)
-            mycas.fcisolver.nroots = 5
-            #mycas.fcisolver.wfnsym = 'B1u'
-            
-            #weights = [.5, .5]
-            #solver1 = fci.direct_spin1_symm.FCI(cell)
-            #solver1.wfnsym= 'B1u'
-            #solver1.spin = 0
-            #solver2 = fci.direct_spin1_symm.FCI(cell)
-            #solver2.wfnsym= 'A1g'
-            #solver2.spin = 0
-            #mcscf.addons.state_average_mix_(mycas, [solver1, solver2], weights)
-            
-            mycas.kernel(orbs)
-            
             uscr.write('n={} Exc={} U={}'.format(nx, mycas.e_tot, (my_unscreened_eris[0,0,0,0]+my_unscreened_eris[ncas-1, ncas-1, ncas-1, ncas-1])/2))
             uscr.write('\n')
             uscr.write('unscreened eris \n')
@@ -326,30 +321,37 @@ if __name__ == '__main__':
             mycas.canonicalization = False
             mycas.verbose = 6
             
-            #mycas.wfnsym = 'A1g'
-            #mycas.nroots = 2
-            #mycas1 = fci.addons.fix_spin_(mycas, ss=0)
-            #mycas1.kernel(orbs)
-            
-            #mycas.wfnsym = 'B1u'
-            #mycas.nroots = 1
-            #mycas2 = fci.addons.fix_spin_(mycas, ss=0)
-            #mycas2.kernel(orbs)
+            mycas.fcisolver.nroots = 4
+            mycas.kernel(orbs)
+            '''from pyscf import symm
+            orbsym = symm.label_orb_symm(cell, cell.irrep_id, cell.symm_orb, mf.mo_coeff)
+            #orbsym = symm.label_orb_symm(cell, cell.irrep_name, cell.symm_orb, orbs)
+            mycas.fcisolver = fci.direct_spin0_symm.FCI(cell)
+            mycas.fcisolver.nroots = 1
+            mycas.fcisolver.orbsym = np.asarray(orbsym)
+            mycas.fcisolver.wfnsym = 'Ag'
+            mycas.fix_spin_(ss=0)
+            mycas.kernel(orbs)
 
             #mycas.fcisolver = fci.direct_spin1_symm.FCI(cell)
-            mycas.fcisolver.nroots = 5
-            #mycas.fcisolver.wfnsym = 'B1u'
-            
-            #weights = [.5, .5]
-            #solver1 = fci.direct_spin1_symm.FCI(cell)
-            #solver1.wfnsym= 'B1u'
-            #solver1.spin = 0
-            #solver2 = fci.direct_spin1_symm.FCI(cell)
-            #solver2.wfnsym= 'A1g'
-            #solver2.spin = 0
-            #mcscf.addons.state_average_mix_(mycas, [solver1, solver2], weights)
-
+            #mycas.fcisolver.nroots = 1
+            #mycas.fcisolver.orbsym = orbsym
+            mycas.fcisolver.wfnsym = 'B1u'
+            #mycas.fix_spin_(ss=0)
             mycas.kernel(orbs)
+
+            #mycas.fcisolver = fci.direct_spin1_symm.FCISolver(cell)
+            #mycas.fcisolver.nroots = 5
+            #mycas.fcisolver.wfnsym = 'Ag'
+            #from pyscf import symm
+            #symm.label_orb_symm(cell, cell.irrep_name, cell.symm_orb, mf.mo_coeff)
+            #cas_space_symmetry = {'B3g': 1, 'B2u':1}
+            #mo = mcscf.sort_mo_by_irrep(mycas, orbs, cas_space_symmetry)
+            #mycas.fcisolver.orbsym =  symm.label_orb_symm(cell, cell.irrep_name, cell.symm_orb, mf.mo_coeff)
+            #mycas.kernel(orbs)
+            #print(fci.direct_spin1_symm.guess_wfnsym(mycas.fcisolver, ncas, ne_act, mycas.ci[0]))
+            '''
+            #print('ci', mycas.ci)
             
             scr.write('n={} Exc={} U={}'.format(nx, mycas.e_tot, (my_screened_eris[0,0,0,0]+my_screened_eris[ncas-1, ncas-1, ncas-1, ncas-1])/2))
             scr.write('\n')

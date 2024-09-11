@@ -99,136 +99,132 @@ class cRPA_supercell(cRPA):
         return self.ERIs
 
 if __name__ == '__main__':
-    
     #hBN+C2
-    from pyscf.pbc import gto, dft
+    from pyscf.pbc import gto, dft, scf
     from crpa import cRPA_CASCI
-    from ase.lattice.hexagonal import Graphene 
+    from ase.lattice.hexagonal import Graphene
     import os 
     import sys
     atoms_cell_path = '/burg/berkelbach/users/sjb2225/v2.4.0/crpa/github/crpa/hbn_c2_geometries/'
     from pyscf.lib import chkfile
 
-    i =  sys.argv[1]
+    cell_size =  sys.argv[1]
     basis = 'dzvp'
-    fnl = 'PBE'
-    if fnl == 'HF':
-        print('WARNING!! comment out h1 part in crpa.py')
-    with open('screened_{}_{}_{}.txt'.format(fnl, basis, i), 'w') as scr:
-        with open('unscreened_{}_{}_{}.txt'.format(fnl, basis, i), 'w') as uscr:
-            nx = i
-            ny = i
-            cell = gto.Cell()
-            cell.unit = 'b'
-            atoms = open(atoms_cell_path+"atoms_{}.txt".format(i), "r")
-            cell_abc = open(atoms_cell_path+"cell_{}.txt".format(i), "r")
-            cell.atom = atoms.read()
-            cell.a = cell_abc.read()
-            
-            cell.basis = 'gth-'+basis
-            cell.pseudo = 'gth-'+fnl
-            cell.ke_cutoff = 80.
-            cell.verbose = 5
-            cell.build()
-                        
-            gdf = df.GDF(cell)
-            gdf_fname = '{}_{}_{}.h5'.format(fnl, basis, i)
-            gdf._cderi_to_save = gdf_fname
-            if not os.path.isfile(gdf_fname):
-                gdf.build()
-
-            chkfname = '{}_{}_{}.chk'.format(fnl, basis, i)
-            if os.path.isfile(chkfname):
-                mf = dft.RKS(cell)
-                mf.xc = fnl
-                mf.with_df = gdf
-                mf.with_df._cderi = gdf_fname
-                data = chkfile.load(chkfname, 'scf')
-                mf.__dict__.update(data)
-            else:
-                mf = dft.RKS(cell)
-                mf.xc = fnl
-                mf.with_df = gdf
-                mf.with_df._cderi = gdf_fname
-                mf.conv_tol = 1e-12
-                mf.chkfile = chkfname
-                mf.verbose = 9
-                mf.kernel()
-            
-            nocc = cell.nelectron//2
-            print('nocc', nocc)
-            nmo = mf.mo_energy.size
-            nvir = nmo - nocc
-            print('HOMO E: ', mf.mo_energy[nocc-1], 'LUMO E: ', mf.mo_energy[nocc])
-            
-            
-            C_loc = lib.chkfile.load(chkfname, 'C_loc')
-            if C_loc is None:
-                # Using P-M to mix and localize the HOMO/LUMO
-                from pyscf import lo
-                idcs = np.ix_(np.arange(nmo), [nocc-1, nocc])
-
-                from pyscf.tools import mo_mapping
-                comp = mo_mapping.mo_comps('C 2pz', cell, mf.mo_coeff)
-                C2pz_idcs = np.argsort(-comp)[:5]
-                for idx in C2pz_idcs:
-                    print(f'AO {idx} has {comp[idx]} C2pz character')
-
-                mo_init = lo.PM(cell, mf.mo_coeff[idcs])
-                C_loc = mo_init.kernel()
-                lib.chkfile.dump(chkfname, 'C_loc', C_loc)
+    fnl = 'HF'
+    cell = gto.Cell()
+    cell.unit = 'b'
+    atoms = open(atoms_cell_path+"atoms_{}.txt".format(cell_size), "r")
+    cell_abc = open(atoms_cell_path+"cell_{}.txt".format(cell_size), "r")
+    cell.atom = atoms.read()
+    cell.a = cell_abc.read()
+    
+    cell.basis = 'gth-'+basis
+    cell.pseudo = 'gth-'+fnl
+    cell.ke_cutoff = 80.
+    cell.verbose = 5
+    cell.build()
                 
-                from pyscf.tools import cubegen
-                for orbnum in range(2):
-                    cubegen.orbital(cell, f'canon_{fnl}_{basis}_{i}_mo{orbnum+1}.cube', mf.mo_coeff[idcs][:,orbnum])
-                    cubegen.orbital(cell, f'loc_{fnl}_{basis}_{i}_mo{orbnum+1}.cube', C_loc[:,orbnum])
-            
-            mycRPA = cRPA_supercell(mf, gdf_fname, loc_coeff = C_loc)
-            my_unscreened_eris = mycRPA.kernel(screened = False)
-            my_screened_eris = mycRPA.kernel(screened = True)
-            #print('hBN+C2 C2pz unscreened ERIs (eV)', my_unscreened_eris*27.2114)
-            #print('hBN+C2 C2pz screened ERIs (eV)', my_screened_eris*27.2114)
-            
-            from pyscf import mcscf, fci
-         
-            uscr.write('cRPA_CASCI, unscreened U \n')
-            ncas  = 2
-            ne_act = 2
-            mycas = cRPA_CASCI(mf, ncas, ne_act, screened_ERIs = my_unscreened_eris)
-            mycas.canonicalization = False
-            mycas.verbose = 6
-            orbs = np.hstack( ( np.hstack( (mf.mo_coeff[:, :nocc-1], C_loc) ), mf.mo_coeff[:, nocc+1:] ) )
-            mycas.fcisolver.nroots = 5
-            mycas.kernel(orbs)
-            uscr.write('t={} \n'.format(mycas.get_h1eff()))
-            uscr.write('n={} Exc={} U={}'.format(nx, mycas.e_tot, (my_unscreened_eris[0,0,0,0]+my_unscreened_eris[1,1,1,1])/2))
+    gdf = df.GDF(cell)
+    gdf_fname = '{}_{}_{}.h5'.format(fnl, basis, cell_size)
+    gdf._cderi_to_save = gdf_fname
+    if not os.path.isfile(gdf_fname):
+        gdf.build()
+
+    chkfname = '{}_{}_{}.chk'.format(fnl, basis, cell_size)
+    if os.path.isfile(chkfname):
+        mf = dft.RKS(cell)
+        if fnl == 'HF':
+            mf = scf.RHF(cell)
+        mf.xc = fnl
+        mf.with_df = gdf
+        mf.with_df._cderi = gdf_fname
+        data = chkfile.load(chkfname, 'scf')
+        mf.__dict__.update(data)
+    else:
+        mf = dft.RKS(cell)
+        if fnl == 'HF':
+            mf = scf.RHF(cell)
+        mf.xc = fnl
+        mf.with_df = gdf
+        mf.with_df._cderi = gdf_fname
+        mf.conv_tol = 1e-12
+        mf.chkfile = chkfname
+        mf.verbose = 9
+        mf.kernel()
+    
+    nocc = cell.nelectron//2
+    nmo = mf.mo_energy.size
+    nvir = nmo - nocc
+    
+    C_loc = lib.chkfile.load(chkfname, 'C_loc')
+    if C_loc is None:
+        # Using P-M to mix and localize the HOMO/LUMO
+        from pyscf import lo
+        idcs = np.ix_(np.arange(nmo), [nocc-1, nocc])
+
+        from pyscf.tools import mo_mapping
+        comp = mo_mapping.mo_comps('C 2pz', cell, mf.mo_coeff)
+        C2pz_idcs = np.argsort(-comp)[:5]
+        for idx in C2pz_idcs:
+            print(f'AO {idx} has {comp[idx]} C2pz character')
+
+        mo_init = lo.PM(cell, mf.mo_coeff[idcs])
+        C_loc = mo_init.kernel()
+        lib.chkfile.dump(chkfname, 'C_loc', C_loc)
+        
+        from pyscf.tools import cubegen
+        for orbnum in range(2):
+            cubegen.orbital(cell, f'canon_{fnl}_{basis}_{cell_size}_mo{orbnum+1}.cube', mf.mo_coeff[idcs][:,orbnum])
+            cubegen.orbital(cell, f'loc_{fnl}_{basis}_{cell_size}_mo{orbnum+1}.cube', C_loc[:,orbnum])
+    
+    mycRPA = cRPA_supercell(mf, gdf_fname, loc_coeff = C_loc)
+    
+    from pyscf import mcscf, fci
+    ncas  = 2
+    ne_act = 2
+        
+    with open('unscreened_{}_{}_{}.txt'.format(fnl, basis, cell_size), 'w') as uscr:
+        my_unscreened_eris = mycRPA.kernel(screened = False)
+ 
+        uscr.write('cRPA_CASCI, unscreened U \n')
+        mycas = cRPA_CASCI(mf, ncas, ne_act, screened_ERIs = my_unscreened_eris)
+        mycas.canonicalization = False
+        mycas.verbose = 6
+        orbs = np.hstack( ( np.hstack( (mf.mo_coeff[:, :nocc-1], C_loc) ), mf.mo_coeff[:, nocc+1:] ) )
+        mycas.fcisolver.nroots = 5
+        mycas.kernel(orbs)
+        uscr.write('t={} \n'.format(mycas.get_h1eff()))
+        uscr.write('n={} Exc={} U={}'.format(cell_size, mycas.e_tot, (my_unscreened_eris[0,0,0,0]+my_unscreened_eris[1,1,1,1])/2))
+        uscr.write('\n')
+        uscr.write('unscreened eris \n')
+        for i in range(2):
+            for j in range(2):
+                for k in range(2):
+                    for l in range(2):
+                        uscr.write('({}{}|{}{})={} \n'.format(i,j,k,l, my_unscreened_eris[i,j,k,l]*27.2114))
+        for exc in mycas.e_tot:
+            uscr.write('{}'.format(27.2114*(exc-mycas.e_tot[0])))
             uscr.write('\n')
-            uscr.write('unscreened eris \n')
-            for i in range(2):
-                for j in range(2):
-                    for k in range(2):
-                        for l in range(2):
-                            uscr.write('({}{}|{}{})={} \n'.format(i,j,k,l, my_unscreened_eris[i,j,k,l]*27.2114))
-            for exc in mycas.e_tot:
-                uscr.write('{}'.format(27.2114*(exc-mycas.e_tot[0])))
-                uscr.write('\n')
-            
-            scr.write('cRPA_CASCI, screened U \n')
-            mycas = cRPA_CASCI(mf, ncas, ne_act, screened_ERIs = my_screened_eris)
-            mycas.canonicalization = False
-            mycas.verbose = 6
-            # orbs = np.hstack( ( np.hstack( (mf.mo_coeff[:, :nocc-1], C_loc) ), mf.mo_coeff[:, nocc+1:] ) )
-            mycas.fcisolver.nroots = 4
-            mycas.kernel(orbs)
-            scr.write('t={} \n'.format(mycas.get_h1eff()))
-            scr.write('n={} Exc={} U={}'.format(nx, mycas.e_tot, (my_screened_eris[0,0,0,0]+my_screened_eris[1,1,1,1])/2))
+    
+    
+    with open('screened_{}_{}_{}.txt'.format(fnl, basis, cell_size), 'w') as scr:
+        my_screened_eris = mycRPA.kernel(screened = True)
+                
+        scr.write('cRPA_CASCI, screened U \n')
+        mycas = cRPA_CASCI(mf, ncas, ne_act, screened_ERIs = my_screened_eris)
+        mycas.canonicalization = False
+        mycas.verbose = 6
+        mycas.fcisolver.nroots = 4
+        mycas.kernel(orbs)
+        scr.write('t={} \n'.format(mycas.get_h1eff()))
+        scr.write('n={} Exc={} U={}'.format(cell_size, mycas.e_tot, (my_screened_eris[0,0,0,0]+my_screened_eris[1,1,1,1])/2))
+        scr.write('\n')
+        scr.write('screened eris \n')
+        for i in range(2):
+            for j in range(2):
+                for k in range(2):
+                    for l in range(2):
+                        scr.write('({}{}|{}{})={} \n'.format(i,j,k,l, my_screened_eris[i,j,k,l]*27.2114))
+        for exc in mycas.e_tot[1:]:
+            scr.write('{}'.format(27.2114*(exc-mycas.e_tot[0])))
             scr.write('\n')
-            scr.write('screened eris \n')
-            for i in range(2):
-                for j in range(2):
-                    for k in range(2):
-                        for l in range(2):
-                            scr.write('({}{}|{}{})={} \n'.format(i,j,k,l, my_screened_eris[i,j,k,l]*27.2114))
-            for exc in mycas.e_tot[1:]:
-                scr.write('{}'.format(27.2114*(exc-mycas.e_tot[0])))
-                scr.write('\n')
