@@ -12,27 +12,59 @@ def kernel(crpa, screened = True):
     nmo = crpa.nmo
     nocc = crpa.nocc
     nvir = nmo - nocc
-    e_mo_occ = crpa.mo_energy[:nocc] 
-    e_mo_vir = crpa.mo_energy[nocc:] 
+#    e_mo_occ = crpa.mo_energy[:nocc] 
+#    e_mo_vir = crpa.mo_energy[nocc:] 
     
-    canon_Lov, loc_Lpq = crpa.get_Lpq()
+#    canon_Lov, loc_Lpq = crpa.get_Lpq()
     
-    if not screened:
-        return einsum('Pij,Pkl->ijkl', loc_Lpq, loc_Lpq) 
+#    if not screened:
+#        return einsum('Pij,Pkl->ijkl', loc_Lpq, loc_Lpq) 
+#        
+#    U = crpa.make_U()
+    
+#    naux = np.shape(canon_Lov)[0]
+#    i_mat = np.zeros((naux,naux))
+    
+#    U_occ = U[:nocc, :]
+#    U_vir = U[nocc:, :]
         
+#    for a in range(nvir):
+#        for i in range(nocc): 
+#            i_mat += (1-np.sum(np.abs(U_occ[i,:])**2)*np.sum(np.abs(U_vir[a,:])**2))*np.outer(canon_Lov[:,i,a]/(e_mo_occ[i] - e_mo_vir[a]), canon_Lov[:,i,a])
+                
+    nocc_full = crpa.nocc_full
+    e_mo_occ = crpa.mo_energy[:nocc_full]
+    e_mo_singly_occ = crpa.mo_energy[nocc_full:nocc]
+    e_mo_vir = crpa.mo_energy[nocc:]
+    canon_Lov, loc_Lpq = crpa.get_Lpq()
+
+    if not screened:
+        return einsum('Pij,Pkl->ijkl', loc_Lpq, loc_Lpq)
+
     U = crpa.make_U()
-    
+
     naux = np.shape(canon_Lov)[0]
     i_mat = np.zeros((naux,naux))
-    
-    U_occ = U[:nocc, :]
+
+    U_occ = U[:nocc_full, :]
+    U_singly_occ = U[nocc_full:nocc, :]
     U_vir = U[nocc:, :]
-        
+
+    Lov = canon_Lov[:,:nocc_full, :]
+    #for singly occ to virtual
+    Lov_ = canon_Lov[:,nocc_full:nocc, :]
+    
+    #4* for double occ to virtual
+    #2* for singly occ to virtual
     for a in range(nvir):
-        for i in range(nocc): 
-            i_mat += (1-np.sum(np.abs(U_occ[i,:])**2)*np.sum(np.abs(U_vir[a,:])**2))*np.outer(canon_Lov[:,i,a]/(e_mo_occ[i] - e_mo_vir[a]), canon_Lov[:,i,a])
-                
-    i_tilde = np.linalg.inv(np.eye(naux)-4.0*i_mat)
+        for i in range(nocc_full):
+            i_mat += 4*(1-np.sum(np.abs(U_occ[i,:])**2)*np.sum(np.abs(U_vir[a,:])**2))*np.outer(Lov[:,i,a]/(e_mo_occ[i] - e_mo_vir[a]), Lov[:,i,a])
+        if nocc-nocc_full > 0:
+            for i in range(nocc-nocc_full):
+                i_mat += 2*(1-np.sum(np.abs(U_singly_occ[i,:])**2)*np.sum(np.abs(U_vir[a,:])**2))*np.outer(Lov_[:,i,a]/(e_mo_singly_occ[i] - e_mo_vir[a]), Lov_[:,i,a])
+    
+    i_tilde = np.linalg.inv(np.eye(naux)-i_mat)
+#    i_tilde = np.linalg.inv(np.eye(naux)-4.0*i_mat)
         
     return einsum('Pij,PQ,Qkl->ijkl', loc_Lpq, i_tilde, loc_Lpq)
 
@@ -109,7 +141,8 @@ class cRPA(lib.StreamObject):
         self.mo_occ     =   mf.mo_occ
         self.nao        =   mf.mol.nao_nr()
         self.nmo        =   len(mf.mo_occ)
-        self.nocc       =   np.count_nonzero(mf.mo_occ > 0)
+        self.nocc       =   np.count_nonzero(mf.mo_occ > 0) #same as nocc_full for RHF, RKS
+        self.nocc_full = mf.mol.nelectron // 2 #double occupied spatial orbs
         self.nvir       =   self.nmo - self.nocc
     
     def get_Lpq(self):
@@ -208,269 +241,237 @@ if __name__ == '__main__':
     from pyscf.mcscf import avas
     from pyscf.tools import molden
     from pyscf.tools import mo_mapping
-    
     import os
     import sys
-    atoms_cell_path = '/burg/berkelbach/users/sjb2225/v2.4.0/crpa/github/crpa/polyene_geometries/'
-    from pyscf.lib import chkfile
+    from pyscf.scf import chkfile
 
-    i =  sys.argv[1]
-    basis = 'cc-pVDZ'
-    fnl = 'HF'
-    if fnl == 'HF':
-        print('WARNING!!!!! comment out h1e part of CASCI')
+    #vanadocene
+    chkfile_name = 'scfcalc.chk'
+    '''https://github.com/YueqingChang/Downfolding_benchmark_vanadocene/tree/main'''
+    mol, scf_rec = chkfile.load_scf(chkfile_name)
+    mol.build()
     
-    with open('screened_{}_{}_{}.txt'.format(fnl, basis, i), 'w') as scr:
-        with open('unscreened_{}_{}_{}.txt'.format(fnl, basis, i), 'w') as uscr:
-            nx = i
-            ny = i
-            cell = gto.Mole()
-            cell.unit = 'A'
-            atoms = open(atoms_cell_path+"{}.txt".format(i), "r")
-            cell.atom = atoms.read()
-            cell.basis = basis
-            cell.verbose = 9
-            cell.build()
-
-            gdf = df.GDF(cell)
-            gdf_fname = '{}_{}_{}.h5'.format(fnl, basis, i)
-            gdf._cderi_to_save = gdf_fname
-            if not os.path.isfile(gdf_fname):
-                gdf.build()
-
-            chkfname = '{}_{}_{}.chk'.format(fnl, basis, i)
-            if os.path.isfile(chkfname):
-                #mf = dft.RKS(cell)
-                mf = scf.RHF(cell).density_fit()
-                mf.xc = fnl
-                data = chkfile.load(chkfname, 'scf')
-                mf.__dict__.update(data)
-            else:
-                #mf = dft.RKS(cell)
-                mf = scf.RHF(cell).density_fit()
-                mf.xc = fnl
-                mf.conv_tol = 1e-12
-                mf.chkfile = chkfname
-                mf.kernel()
-            
-            nocc = cell.nelectron//2
-            print('nocc', nocc)
-            nmo = mf.mo_energy.size
-            nvir = nmo - nocc
-            print('HOMO E: ', mf.mo_energy[nocc-1], 'LUMO E: ', mf.mo_energy[nocc])
-            
-            min_orb = nocc-int(i)//2
-            max_orb = nocc+(int(i)//2-1)
-            print('min_orb, max_orb', min_orb, max_orb)
-            C_loc = lib.chkfile.load(chkfname, 'C_loc')
-            if C_loc is None:
-                # Using P-M to mix and localize the HOMO/LUMO
-                from pyscf import lo
-                #2: nocc-1, nocc
-                #4: nocc-2, nocc-1, nocc, nocc+1
-                #6: nocc-3, nocc-2, nocc-1, nocc, nocc+1, nocc+2
-                idcs = np.ix_(np.arange(nmo), [x for x in range(min_orb, max_orb+1)])
-
-                from pyscf.tools import mo_mapping
-                comp = mo_mapping.mo_comps('C 2pz', cell, mf.mo_coeff)
-                C2pz_idcs = np.argsort(-comp)[:8]
-                for idx in C2pz_idcs:
-                    print(f'MO {idx} has {comp[idx]} C2pz character')
-
-                mo_init = lo.edmiston.EdmistonRuedenberg(cell, mf.mo_coeff[idcs])
-                C_loc = mo_init.kernel()
-                lib.chkfile.dump(chkfname, 'C_loc', C_loc)
+    # mf = scf.ROHF(mol).density_fit()
+    # mf.xc = 'hf'
+    mf = scf.ROKS(mol).density_fit()
+    mf.xc = 'PBE'
+    chkfname = 'scfcalc.chk'
+    dm = mf.from_chk(chkfname)
+    
+    mf.with_df._cderi_to_save = 'vanadocene_PBE.h5'
+    mf.max_cycle = 0
+    # mf.kernel()
+    mf.kernel(dm)
+    
+    nmo = mf.mo_energy.size
+    print('number of electrons', mol.nelectron)
+   
+    nocc      = np.count_nonzero(mf.mo_occ != 0)
+    nocc_full = mol.nelectron // 2 #doubly occupied spatial orbitals
+    nvir      = nmo - nocc
+    print('number of electrons', mol.nelectron)
+    print('nocc', nocc)
+    print('number of doubly occupied spatial orbitals', nocc_full)
+ 
+    chkfname = 'vanadocene_orbs_PBE.chk'
+    
+    # ao_labels = ['V 3d']
+    # avas_obj = avas.AVAS(mf, ao_labels, threshold = 0.3, canonicalize=False) #orbs = coefficients of AO->localized orbs
+    # norb, ne_act, orbs = avas_obj.kernel()
+    # print(avas_obj.occ_weights)
+    # print(avas_obj.vir_weights)
+    # ncas = avas_obj.ncas
+    # nelecas = avas_obj.nelecas
+    # print(ncas)
+    # print(nelecas)
+    # ncore = avas_obj.ncore
+    
+    # nocc_act = np.count_nonzero(avas_obj.occ_weights > 0.3)
+    # nvir_act = np.count_nonzero(avas_obj.vir_weights > 0.3)
+    # print('nocc_act', nocc_act, 'nvir_act', nvir_act)
+    
+    # orbs = lib.chkfile.dump(chkfname, 'orbs', orbs)
+    # ncas = lib.chkfile.dump(chkfname, 'ncas', ncas)
+    # nelecas = lib.chkfile.dump(chkfname, 'nelecas', nelecas)
                 
-                from pyscf.tools import cubegen
-                for orbnum in range(int(i)):
-                    cubegen.orbital(cell, f'canon_{basis}_{i}_mo{orbnum+1}.cube', mf.mo_coeff[idcs][:,orbnum])
-                    cubegen.orbital(cell, f'loc_{basis}_{i}_mo{orbnum+1}.cube', C_loc[:,orbnum])
-            
-            mycRPA = cRPA(mf, gdf_fname, loc_coeff = C_loc)
-            my_unscreened_eris = mycRPA.kernel(screened = False)
-            my_screened_eris = mycRPA.kernel(screened = True)
-            
-            from pyscf import mcscf, fci
-         
-            uscr.write('cRPA_CASCI, unscreened U \n')
-            ncas  = int(i)
-            ne_act = int(i)
-            mycas = cRPA_CASCI(mf, ncas, ne_act, screened_ERIs = my_unscreened_eris)
-            mycas.canonicalization = False
-            mycas.verbose = 6
-            orbs = np.hstack( ( np.hstack( (mf.mo_coeff[:, :min_orb], C_loc) ), mf.mo_coeff[:, max_orb+1:] ) )
+    # orbs = lib.chkfile.load(chkfname, 'orbs')
+    # ncas = lib.chkfile.load(chkfname, 'ncas')
+    # nelecas = lib.chkfile.load(chkfname, 'nelecas')
+    
+    print('mo energies', mf.mo_energy[nocc-2:nocc+3])
+    
+    # # Using P-M to mix and localize the 5 orbs
+    from pyscf import lo
+    ncas = 5
+    nocc_act = 2
+    nvir_act = 3
+    idcs = np.ix_(np.arange(nmo), np.arange(nocc-2, nocc+3))
 
-            mycas.fcisolver.nroots = 4
-            mycas.kernel(orbs) 
-            #print('ci', mycas.ci)
+    comp = mo_mapping.mo_comps('V 3d', mol, mf.mo_coeff)
+    V3d_idcs = np.argsort(-comp)[:12] #0-indexed
+    for idx in V3d_idcs:
+        print(f'AO {idx} has {comp[idx]} V 3d character')
 
-            uscr.write('n={} Exc={} U={}'.format(nx, mycas.e_tot, (my_unscreened_eris[0,0,0,0]+my_unscreened_eris[ncas-1, ncas-1, ncas-1, ncas-1])/2))
-            uscr.write('\n')
-            uscr.write('unscreened eris \n')
-            for i in range(ncas):
-                for j in range(ncas):
-                    for k in range(ncas):
-                        for l in range(ncas):
-                            uscr.write('({}{}|{}{})={} \n'.format(i,j,k,l, my_unscreened_eris[i,j,k,l]*27.2114))
-            for exc in mycas.e_tot:
-                uscr.write('{}'.format(27.2114*(exc-mycas.e_tot[0])))
-                uscr.write('\n')
-            
-            scr.write('cRPA_CASCI, screened U \n')
-            mycas = cRPA_CASCI(mf, ncas, ne_act, screened_ERIs = my_screened_eris)
-            mycas.canonicalization = False
-            mycas.verbose = 6
-            
-            mycas.fcisolver.nroots = 4
-            mycas.kernel(orbs)
-            '''from pyscf import symm
-            orbsym = symm.label_orb_symm(cell, cell.irrep_id, cell.symm_orb, mf.mo_coeff)
-            #orbsym = symm.label_orb_symm(cell, cell.irrep_name, cell.symm_orb, orbs)
-            mycas.fcisolver = fci.direct_spin0_symm.FCI(cell)
-            mycas.fcisolver.nroots = 1
-            mycas.fcisolver.orbsym = np.asarray(orbsym)
-            mycas.fcisolver.wfnsym = 'Ag'
-            mycas.fix_spin_(ss=0)
-            mycas.kernel(orbs)
+    mo_init = lo.Boys(mol, mf.mo_coeff[idcs])
+    orbs = mo_init.kernel()
+    lib.chkfile.dump(chkfname, 'orbs', orbs)
 
-            #mycas.fcisolver = fci.direct_spin1_symm.FCI(cell)
-            #mycas.fcisolver.nroots = 1
-            #mycas.fcisolver.orbsym = orbsym
-            mycas.fcisolver.wfnsym = 'B1u'
-            #mycas.fix_spin_(ss=0)
-            mycas.kernel(orbs)
+    # PM/Boys
+    from pyscf.tools import cubegen
+    for orbnum in range(5):
+        cubegen.orbital(mol, f'canon_{mf.xc}_{mol.basis}_mo{orbnum+1}.cube', mf.mo_coeff[idcs][:,orbnum])
+        cubegen.orbital(mol, f'loc_{mf.xc}_{mol.basis}_mo{orbnum+1}.cube', orbs[:,orbnum])
+    
+    C_loc = orbs#[:,nocc-nocc_act:nocc+nvir_act]
+    
+    #AVAS
+    # from pyscf.tools import cubegen
+    # for orbnum in range(5):
+    #     cubegen.orbital(mol, f'canon_{mf.xc}_{mol.basis}_mo{orbnum+1}.cube', mf.mo_coeff[:,nocc-nocc_act:nocc+nvir_act] [:,orbnum])
+    #     cubegen.orbital(mol, f'loc_{mf.xc}_{mol.basis}_mo{orbnum+1}.cube', orbs[:,nocc-nocc_act:nocc+nvir_act] [:,orbnum])
+    
+    # C_loc = orbs[:,nocc-nocc_act:nocc+nvir_act]
+    
+    mycRPA = cRPA(mf, 'vanadocene_PBE.h5', loc_coeff = C_loc)
+    my_unscreened_eris = mycRPA.kernel(screened = False)
+    print('unscreened ERIs (eV)', [my_unscreened_eris[i,i,i,i]*27.2114 for i in range(ncas)])
+    print('unscreened iijj (eV)', [my_unscreened_eris[i,i,j,j]*27.2114 for i in range(3) for j in range(3)])
+    print('unscreened ijij (eV)', [my_unscreened_eris[i,j,i,j]*27.2114 for i in range(3) for j in range(3)])
+     my_screened_eris = mycRPA.kernel(screened = True)
+     print('screened ERIs (eV)', [my_screened_eris[i,i,i,i]*27.2114 for i in range(ncas)])
+     print('screened iijj (eV)', [my_screened_eris[i,i,j,j]*27.2114 for i in range(3) for j in range(3)])
+     print('screened ijij (eV)', [my_screened_eris[i,j,i,j]*27.2114 for i in range(3) for j in range(3)])
+    
+     scr_ev, scr_ew = np.linalg.eigh(my_screened_eris.reshape((ncas*ncas, ncas*ncas)))
+     print('scr_ev', scr_ev)
+     unscr_ev, unscr_ew = np.linalg.eigh(my_unscreened_eris.reshape((ncas*ncas, ncas*ncas)))
+     # scr_in_unscr_eigenbasis = np.dot(np.linalg.inv(unscr_ew), np.dot(my_screened_eris.reshape((ncas*ncas, ncas*ncas)), unscr_ew))
+     # scr_ev = np.diag(scr_in_unscr_eigenbasis)
+     print('scr_ev in unscr eigenbasis', scr_ev)
+     print(unscr_ev[-1]/scr_ev[-1])
+     print(unscr_ev[:-1]/scr_ev[:-1])
+    
+    orbs = np.hstack((mf.mo_coeff[:, :nocc-2], orbs, mf.mo_coeff[:, nocc+3:]))
 
-            #mycas.fcisolver = fci.direct_spin1_symm.FCISolver(cell)
-            #mycas.fcisolver.nroots = 5
-            #mycas.fcisolver.wfnsym = 'Ag'
-            #from pyscf import symm
-            #symm.label_orb_symm(cell, cell.irrep_name, cell.symm_orb, mf.mo_coeff)
-            #cas_space_symmetry = {'B3g': 1, 'B2u':1}
-            #mo = mcscf.sort_mo_by_irrep(mycas, orbs, cas_space_symmetry)
-            #mycas.fcisolver.orbsym =  symm.label_orb_symm(cell, cell.irrep_name, cell.symm_orb, mf.mo_coeff)
-            #mycas.kernel(orbs)
-            #print(fci.direct_spin1_symm.guess_wfnsym(mycas.fcisolver, ncas, ne_act, mycas.ci[0]))
-            '''
-            #print('ci', mycas.ci)
-            
-            scr.write('n={} Exc={} U={}'.format(nx, mycas.e_tot, (my_screened_eris[0,0,0,0]+my_screened_eris[ncas-1, ncas-1, ncas-1, ncas-1])/2))
-            scr.write('\n')
-            scr.write('screened eris \n')
-            for i in range(ncas):
-                for j in range(ncas):
-                    for k in range(ncas):
-                        for l in range(ncas):
-                            scr.write('({}{}|{}{})={} \n'.format(i,j,k,l, my_screened_eris[i,j,k,l]*27.2114))
-            for exc in mycas.e_tot[1:]:
-                scr.write('{}'.format(27.2114*(exc-mycas.e_tot[0])))
-                scr.write('\n')
-
-
-
-#    mol = gto.Mole()
-#
-#    #ferrocene
-#    mol.atom = '''Fe 0.000000 0.000000 0.000000 
-#    C -0.713500 -0.982049 -1.648000 
-#    C 0.713500 -0.982049 -1.648000 
-#    C 1.154467 0.375109 -1.648000 
-#    C 0.000000 1.213879 -1.648000 
-#    C -1.154467 0.375109 -1.648000 
-#    H -1.347694 -1.854942 -1.638208 
-#    H 1.347694 -1.854942 -1.638208 
-#    H 2.180615 0.708525 -1.638208 
-#    H 0.000000 2.292835 -1.638208 
-#    H -2.180615 0.708525 -1.638208 
-#    C -0.713500 -0.982049 1.648000 
-#    C -1.154467 0.375109 1.648000 
-#    C -0.000000 1.213879 1.648000 
-#    C 1.154467 0.375109 1.648000 
-#    C 0.713500 -0.982049 1.648000 
-#    H -1.347694 -1.854942 1.638208 
-#    H -2.180615 0.708525 1.638208 
-#    H 0.000000 2.292835 1.638208 
-#    H 2.180615 0.708525 1.638208 
-#    H 1.347694 -1.854942 1.638208
-#    '''
-#    
-#    mol.basis = 'cc-pvtz-dk'
-#    mol.build()
-#    
-#    mf = scf.RHF(mol).x2c().density_fit()#.x2c() #should be ROHF for ferrocene, but RHF works
-#    xc_f = 'rhf'
+    nelecas = 3
+    print('cRPA_CASCI, unscreened U')
+    mycas = cRPA_CASCI(mf, ncas, nelecas, screened_ERIs = my_unscreened_eris)
+    print('mycas ncore', mycas.ncore)
+    mycas.canonicalization = False
+    mycas.fcisolver.nroots = 10
+    mycas.kernel(orbs)
+                
+    print('cRPA_CASCI, screened U')
+    mycas = cRPA_CASCI(mf, ncas, nelecas, screened_ERIs = my_screened_eris)
+    mycas.canonicalization = False
+    mycas.fcisolver.nroots = 10
+    mycas.kernel(orbs)
+    
+    sys.exit()
+    
+    #ferrocene
+    mol = gto.Mole()
+    mol.atom = '''Fe 0.000000 0.000000 0.000000 
+    C -0.713500 -0.982049 -1.648000 
+    C 0.713500 -0.982049 -1.648000 
+    C 1.154467 0.375109 -1.648000 
+    C 0.000000 1.213879 -1.648000 
+    C -1.154467 0.375109 -1.648000 
+    H -1.347694 -1.854942 -1.638208 
+    H 1.347694 -1.854942 -1.638208 
+    H 2.180615 0.708525 -1.638208 
+    H 0.000000 2.292835 -1.638208 
+    H -2.180615 0.708525 -1.638208 
+    C -0.713500 -0.982049 1.648000 
+    C -1.154467 0.375109 1.648000 
+    C -0.000000 1.213879 1.648000 
+    C 1.154467 0.375109 1.648000 
+    C 0.713500 -0.982049 1.648000 
+    H -1.347694 -1.854942 1.638208 
+    H -2.180615 0.708525 1.638208 
+    H 0.000000 2.292835 1.638208 
+    H 2.180615 0.708525 1.638208 
+    H 1.347694 -1.854942 1.638208
+    '''
+    
+    mol.basis = 'cc-pvtz-dk'
+    mol.build()
+    
+    mf = scf.RHF(mol).x2c().density_fit()#.x2c() #should be ROHF for ferrocene, but RHF works
+    xc_f = 'rhf'
 #    dm = mf.from_chk('ferrocene_rks.chk')
-#    #mf.chkfile = 'ferrocene_{}_x2c.chk'.format(xc_f)
-#    
-#    #mf.with_df = df.DF(mol)
-#    mf.with_df._cderi_to_save = 'ferrocene_{}_x2c.h5'.format(xc_f)
-#    
-#    
-#    #mf.kernel()
+    mf.chkfile = 'ferrocene_{}_x2c.chk'.format(xc_f)
+    
+#    mf.with_df = df.DF(mol)
+    mf.with_df._cderi_to_save = 'ferrocene_{}_x2c.h5'.format(xc_f)
+    
+    
+    mf.kernel()
 #    mf.kernel(dm)
-#    
-#    nocc = mol.nelectron//2
-#    nmo = mf.mo_energy.size
-#    nvir = nmo - nocc
-#    print('number of electrons', mol.nelectron)
-#    print('nocc', nocc)
-#    
-#    ao_labels = ['Fe 3d', 'C 2pz']
-#    #ao_labels = ['Fe 3d']
-#    avas_obj = avas.AVAS(mf, ao_labels, threshold = 0.1, canonicalize=False) #orbs = coefficients of AO->localized orbs
-#    norb, ne_act, orbs = avas_obj.kernel()
-#    print(avas_obj.occ_weights)
-#    print(avas_obj.vir_weights)
-#    ncas = avas_obj.ncas
-#    nelecas = avas_obj.nelecas
-#    print(ncas)
-#    print(nelecas)
-#    ncore = avas_obj.ncore
-#    
-#    nocc_act = np.count_nonzero(avas_obj.occ_weights > 0.1)
-#    nvir_act = np.count_nonzero(avas_obj.vir_weights > 0.1)
-#    print('nocc_act', nocc_act, 'nvir_act', nvir_act)
-#        
-#    orbs = lib.chkfile.dump('ferrocene_{}_x2c.chk'.format(xc_f), 'orbs', orbs)
-#    ncas = lib.chkfile.dump('ferrocene_{}_x2c.chk'.format(xc_f), 'ncas', ncas)
-#    nelecas = lib.chkfile.dump('ferrocene_{}_x2c.chk'.format(xc_f), 'nelecas', nelecas)
-#                
-#    orbs = lib.chkfile.load('ferrocene_{}_x2c.chk'.format(xc_f), 'orbs')
-#    ncas = lib.chkfile.load('ferrocene_{}_x2c.chk'.format(xc_f), 'ncas')
-#    nelecas = lib.chkfile.load('ferrocene_{}_x2c.chk'.format(xc_f), 'nelecas')
-#    
-#    C_loc = orbs[:,nocc-nocc_act:nocc+nvir_act] 
-#                
-#    mycRPA = cRPA(mf, 'ferrocene_{}_x2c.h5'.format(xc_f), loc_coeff = C_loc)
-#    my_unscreened_eris = mycRPA.kernel(screened = False)
-#    print('ferrocene unscreened ERIs (eV)', [my_unscreened_eris[i,i,i,i]*27.2114 for i in range(ncas)])
-#    my_screened_eris = mycRPA.kernel(screened = True)
-#    print('ferrocene screened ERIs (eV)', [my_screened_eris[i,i,i,i]*27.2114 for i in range(ncas)])
-#                
-#    from pyscf import mcscf#, fci
-#             
-#    print('cRPA_CASCI, unscreened U')
-#    mycas = cRPA_CASCI(mf, ncas, nelecas, screened_ERIs = my_unscreened_eris)
-#    mycas.canonicalization = False
-#    mycas.fcisolver.nroots = 15
-#    mycas.kernel(orbs)
-#                
-#    print('cRPA_CASCI, screened U')
-#    mycas = cRPA_CASCI(mf, ncas, nelecas, screened_ERIs = my_screened_eris)
-#    mycas.canonicalization = False
-#    mycas.fcisolver.nroots = 15
-#    mycas.kernel(orbs)
-#    
-#    print('conventional CASCI')
-#    mycas = mcscf.CASCI(mf, ncas, nelecas)
-#    mycas.fcisolver.nroots = 15
-#    mycas.kernel(orbs)
-#
-#    print('DF-CASCI')
-#    mycas = mcscf.DFCASCI(mf, ncas, nelecas)
-#    mycas.canonicalization = False
-#    # mycas.verbose = 6
-#    # orbs = np.hstack( ( np.hstack( (mf.mo_coeff[:, :nocc-1], C_loc) ), mf.mo_coeff[:, nocc+1:] ) )
-#    mycas.fcisolver.nroots = 15
-#    #print('DFCASCI unscreened U', mycas.ao2mo(orbs))
-#    # print('DFCASCI t', mycas.h1e_for_cas(orbs, ncas))
-#    mycas.kernel(orbs)
+    
+    nocc = mol.nelectron//2
+    nmo = mf.mo_energy.size
+    nvir = nmo - nocc
+    print('number of electrons', mol.nelectron)
+    print('nocc', nocc)
+    
+    ao_labels = ['Fe 3d', 'C 2pz']
+    #ao_labels = ['Fe 3d']
+    avas_obj = avas.AVAS(mf, ao_labels, threshold = 0.1, canonicalize=False) #orbs = coefficients of AO->localized orbs
+    norb, ne_act, orbs = avas_obj.kernel()
+    print(avas_obj.occ_weights)
+    print(avas_obj.vir_weights)
+    ncas = avas_obj.ncas
+    nelecas = avas_obj.nelecas
+    print(ncas)
+    print(nelecas)
+    ncore = avas_obj.ncore
+    
+    nocc_act = np.count_nonzero(avas_obj.occ_weights > 0.1)
+    nvir_act = np.count_nonzero(avas_obj.vir_weights > 0.1)
+    print('nocc_act', nocc_act, 'nvir_act', nvir_act)
+        
+    orbs = lib.chkfile.dump('ferrocene_{}_x2c.chk'.format(xc_f), 'orbs', orbs)
+    ncas = lib.chkfile.dump('ferrocene_{}_x2c.chk'.format(xc_f), 'ncas', ncas)
+    nelecas = lib.chkfile.dump('ferrocene_{}_x2c.chk'.format(xc_f), 'nelecas', nelecas)
+                
+    orbs = lib.chkfile.load('ferrocene_{}_x2c.chk'.format(xc_f), 'orbs')
+    ncas = lib.chkfile.load('ferrocene_{}_x2c.chk'.format(xc_f), 'ncas')
+    nelecas = lib.chkfile.load('ferrocene_{}_x2c.chk'.format(xc_f), 'nelecas')
+    
+    C_loc = orbs[:,nocc-nocc_act:nocc+nvir_act] 
+                
+    mycRPA = cRPA(mf, 'ferrocene_{}_x2c.h5'.format(xc_f), loc_coeff = C_loc)
+    my_unscreened_eris = mycRPA.kernel(screened = False)
+    print('ferrocene unscreened ERIs (eV)', [my_unscreened_eris[i,i,i,i]*27.2114 for i in range(ncas)])
+    my_screened_eris = mycRPA.kernel(screened = True)
+    print('ferrocene screened ERIs (eV)', [my_screened_eris[i,i,i,i]*27.2114 for i in range(ncas)])
+                
+    from pyscf import mcscf#, fci
+             
+    print('cRPA_CASCI, unscreened U')
+    mycas = cRPA_CASCI(mf, ncas, nelecas, screened_ERIs = my_unscreened_eris)
+    mycas.canonicalization = False
+    mycas.fcisolver.nroots = 15
+    mycas.kernel(orbs)
+                
+    print('cRPA_CASCI, screened U')
+    mycas = cRPA_CASCI(mf, ncas, nelecas, screened_ERIs = my_screened_eris)
+    mycas.canonicalization = False
+    mycas.fcisolver.nroots = 15
+    mycas.kernel(orbs)
+    
+    print('conventional CASCI')
+    mycas = mcscf.CASCI(mf, ncas, nelecas)
+    mycas.fcisolver.nroots = 15
+    mycas.kernel(orbs)
+
+    print('DF-CASCI')
+    mycas = mcscf.DFCASCI(mf, ncas, nelecas)
+    mycas.canonicalization = False
+    # mycas.verbose = 6
+    # orbs = np.hstack( ( np.hstack( (mf.mo_coeff[:, :nocc-1], C_loc) ), mf.mo_coeff[:, nocc+1:] ) )
+    mycas.fcisolver.nroots = 15
+    #print('DFCASCI unscreened U', mycas.ao2mo(orbs))
+    # print('DFCASCI t', mycas.h1e_for_cas(orbs, ncas))
+    mycas.kernel(orbs)
