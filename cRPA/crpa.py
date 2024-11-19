@@ -53,7 +53,8 @@ def kernel(crpa, screened = True):
     Lov = canon_Lov[:,:nocc_full, :]
     #for singly occ to virtual
     Lov_ = canon_Lov[:,nocc_full:nocc, :]
-    
+
+    #WARNING: only works for high spin ROHF!
     #4* for double occ to virtual
     #2* for singly occ to virtual
     for a in range(nvir):
